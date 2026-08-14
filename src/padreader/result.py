@@ -44,6 +44,9 @@ class FailureReason(str, Enum):
     BASELINE_UNREADABLE = "baseline_unreadable"
     """기준 사진을 판독하지 못했다. 상세 사유는 ``failure_detail`` 에 담긴다."""
 
+    NORMALIZATION_MISMATCH = "normalization_mismatch"
+    """두 사진이 서로 다른 방식으로 정규화되어 뺄셈이 성립하지 않는다."""
+
     GRID_MISMATCH = "grid_mismatch"
     """기준 사진과 판독 사진의 격자가 어긋나 칸을 맞출 수 없다."""
 

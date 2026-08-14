@@ -47,7 +47,14 @@ from .result import NormalizationInfo
 from .spec import PadSpec
 
 MIN_ANCHOR_SPAN = 1e-3
-"""앵커 대비가 이보다 작으면 나눗셈이 성립하지 않는다."""
+"""나눗셈이 성립하기 위한 최소 크기."""
+
+MIN_REFERENCE_COUNTS = 1.0
+"""기준면 밝기가 이보다 작으면 그것으로 게인을 역산할 수 없다.
+
+도안 원본처럼 잉크가 정확히 0 인 이미지가 여기 해당한다. 실제 촬영은
+센서 바닥값 때문에 0 이 되지 않는다.
+"""
 
 
 @dataclass
@@ -174,7 +181,9 @@ def normalize(
         info.anchor_black, info.anchor_black_mad = black, black_mad
         info.anchor_white, info.anchor_white_mad = white, white_mad
         span = white - black
-        if abs(span) < MIN_ANCHOR_SPAN:
+        if abs(span) < MIN_REFERENCE_COUNTS:
+            # 앵커 두 곳이 같은 밝기다. 그 자리에 앵커가 인쇄되어 있지
+            # 않다는 뜻이고, 대개 규격을 실제 패드와 다르게 지정한 것이다.
             return None
         offset, scale = black, span
         # 반사율 척도가 앵커가 놓인 자리의 조도에 고정된다. 기울기 보정에서
@@ -188,18 +197,24 @@ def normalize(
             return None
         ink, ink_mad = _median_mad(values)
         info.anchor_black, info.anchor_black_mad = ink, ink_mad
-        if abs(ink) < MIN_ANCHOR_SPAN:
-            return None
-        # 앵커가 없으면 관측을 반사율로 되돌릴 기준이 잉크 하나뿐이다.
-        # 잉크 반사율을 가정값으로 놓고 그로부터 게인*조도를 역산한다.
-        # 블랙레벨은 여전히 소거되지 않으므로 저반사 잉크(백색 패드)에서
-        # 오차가 크다 — 앵커가 있는 도안을 쓰는 편이 낫다.
-        assumed = (
-            cfg.assumed_ink_reflectance_dark
-            if tone == "white"
-            else cfg.assumed_ink_reflectance_light
-        )
-        offset, scale = 0.0, ink / max(assumed, MIN_ANCHOR_SPAN)
+
+        if abs(ink) < MIN_REFERENCE_COUNTS:
+            # 기준면이 0 카운트다. 그 값으로 게인을 역산할 수 없지만,
+            # 애초에 게인이 걸리지 않은 이미지라는 뜻이기도 하다 —
+            # 도안 원본이 여기 해당한다. 화소값을 그대로 반사율로 본다.
+            info.method = method = "linear"
+            offset, scale = 0.0, 255.0
+        else:
+            # 앵커가 없으면 관측을 반사율로 되돌릴 기준이 잉크 하나뿐이다.
+            # 잉크 반사율을 가정값으로 놓고 그로부터 게인*조도를 역산한다.
+            # 블랙레벨은 여전히 소거되지 않으므로 저반사 잉크(백색 패드)에서
+            # 오차가 크다 — 앵커가 있는 도안을 쓰는 편이 낫다.
+            assumed = (
+                cfg.assumed_ink_reflectance_dark
+                if tone == "white"
+                else cfg.assumed_ink_reflectance_light
+            )
+            offset, scale = 0.0, ink / max(assumed, MIN_ANCHOR_SPAN)
         # 기준이 링 전체의 중앙값이므로 척도는 링 무게중심의 조도에 고정된다.
         reference_point = positions.mean(axis=0) if positions.size else np.array([0.5, 0.5])
     else:

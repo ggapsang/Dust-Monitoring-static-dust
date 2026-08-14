@@ -95,7 +95,10 @@ def load_image(image: Any) -> np.ndarray | None:
 
 
 def _analyze(
-    bgr: np.ndarray, tone: str, cfg: Config, spec: PadSpec
+    bgr: np.ndarray,
+    tone: str,
+    cfg: Config,
+    spec: PadSpec,
 ) -> tuple[_Analysis | None, tuple[FailureReason, str] | None]:
     """사진 한 장을 처리한다. 실패하면 (None, 사유)."""
     size = cfg.pad_size_px
@@ -257,6 +260,21 @@ def read_pad(
         reason, detail = error
         return finish(PadReadResult.failed(reason, detail, **partial))
     assert analysis is not None
+
+    # 두 사진이 서로 다른 방식으로 정규화되면 척도가 달라 뺄셈이 아무
+    # 의미도 없어진다. 도안 원본(잉크가 정확히 0)을 기준 사진 자리에 넣고
+    # 실제 촬영본을 판독 사진으로 넣으면 여기 걸린다 — 기준 사진은 같은
+    # 카메라로 찍은 **사진**이어야 한다.
+    if analysis.normalization.method != base_analysis.normalization.method:
+        return finish(
+            PadReadResult.failed(
+                FailureReason.NORMALIZATION_MISMATCH,
+                f"두 사진의 조도 정규화 방식이 다르다 "
+                f"(판독 {analysis.normalization.method}, 기준 {base_analysis.normalization.method}). "
+                f"기준 사진은 도안 파일이 아니라 같은 카메라로 찍은 사진이어야 한다.",
+                **partial,
+            )
+        )
 
     if len(analysis.grid.cells) != len(base_analysis.grid.cells):
         return finish(

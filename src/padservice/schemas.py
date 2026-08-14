@@ -232,6 +232,7 @@ FAILURE_LABELS: dict[str, str] = {
     "no_valid_cells": "측정 가능한 구획 없음",
     "invalid_image": "이미지를 읽을 수 없음",
     "baseline_unreadable": "기준 사진을 판독하지 못함",
+    "normalization_mismatch": "기준 사진과 정규화 방식이 다름",
     "grid_mismatch": "기준 사진과 격자가 어긋남",
 }
 
