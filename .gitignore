@@ -1,0 +1,13 @@
+# 파이썬
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# 판독 대상·산출물. 컨테이너에 볼륨으로 붙인다.
+data/
+out/

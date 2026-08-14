@@ -1,0 +1,32 @@
+# 빌드 컨텍스트에서 뺄 것들. 이미지에 들어가면 안 되는 것과, 들어가 봐야
+# 쓸모없이 레이어 캐시만 깨는 것 둘 다 포함한다.
+
+.git
+.gitignore
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+build
+dist
+
+# 판독 대상과 산출물. 볼륨으로 붙인다.
+data
+out
+
+# 서비스 실행에 필요 없는 것들. 도안 샘플(assets)은 규격 회귀 테스트용이라
+# 테스트와 함께 빠진다.
+assets
+requirements
+tests
+README.md
+
+Dockerfile
+docker-compose.yml
+.dockerignore

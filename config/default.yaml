@@ -1,0 +1,112 @@
+# 참조 패드 판독 모듈 기본 설정
+#
+# 아직 확정되지 않은 항목은 값을 비워(null) 둔다. null 인 임계값은
+# **게이트를 적용하지 않는다**는 뜻이며, 산출값 자체는 항상 계산해서
+# 결과에 실어 보낸다. 실증에서 그 분포를 보고 값을 채우는 순서다.
+
+# 패드 규격 이름. legacy = assets/ 의 샘플 도안 그대로, v2 = 2톤 앵커 추가.
+spec: v2
+
+# 정면 보정 출력 한 변의 픽셀 수. 모든 ROI 가 이 크기에 정규화 좌표를 곱해
+# 결정된다.
+pad_size_px: 1120
+
+detect:
+  # 이진화 전 가우시안 블러 커널. 0 이면 끈다.
+  blur_ksize: 5
+  # 이미지 전체 면적 대비 패드 후보의 허용 면적비.
+  min_pad_area_ratio: 0.005
+  max_pad_area_ratio: 0.98
+  # approxPolyDP 의 epsilon 을 둘레의 몇 배로 잡을지.
+  approx_epsilon_ratio: 0.02
+  # 굵은 테두리는 링이므로 자식 컨투어를 갖는다. 이 조건을 요구하면
+  # 오검출이 크게 준다. 테두리가 잘린 이미지에서는 꺼야 할 수 있다.
+  require_ring: true
+  # 사각형 판정 허용치.
+  min_solidity: 0.85
+  max_aspect_ratio: 3.0
+  # 서브픽셀 코너: 네 변의 에지 표본을 뽑을 때 변 끝에서 물러날 비율.
+  # 모서리 라운딩 구간을 피하기 위함이다.
+  edge_trim_ratio: 0.15
+
+orient:
+  # 비어 있는 모서리와 나머지 세 모서리 사이의 최소 대비.
+  # 미달이면 rotation_ambiguous 로 판독 불가. null = 미적용.
+  min_margin: null
+
+quality:
+  # 에지 10-90% 상승 거리 ÷ 패드 픽셀 크기. 작을수록 선명하다.
+  max_edge_rise_ratio: null
+  # 원본 테두리 영역 Tenengrad. 크수록 선명하다. 비교용 보조 지표.
+  min_tenengrad: null
+  max_saturated_bright_ratio: null
+  max_saturated_dark_ratio: null
+  max_tilt_deg: null
+  min_pad_size_px: null
+  # I_white - I_black. 미달이면 정규화가 성립하지 않으므로 판독 불가.
+  min_anchor_contrast: null
+  # 포화 판정 화소값.
+  saturation_bright_level: 250
+  saturation_dark_level: 5
+
+normalize:
+  # auto  : 규격에 앵커가 있으면 two_point, 없으면 border_ratio
+  # two_point   : (I - I_black) / (I_white - I_black).
+  #               블랙레벨 오프셋 B0 와 게인·조명 g*E 가 함께 소거된다.
+  # border_ratio: I / B_border. B0 가 남고, 하필 분모인 저반사 흑색 잉크에서
+  #               B0 비중이 가장 크다. 앵커 없는 레거시 도안 전용.
+  method: auto
+  # border : 테두리 링을 조밀 표본해 조명 평면을 최소자승 적합
+  # none   : 기울기 보정 안 함
+  # margin : 여백 픽셀로 적합. 균일 침착을 조명 기울기로 오인해 분진 신호를
+  #          지울 수 있어 기본값이 아니다. 쓰더라도 상수항은 보존한다.
+  gradient_correction: border
+  # 테두리 링에서 뽑을 표본 점 수. 3자유도 평면에 대해 충분히 커야
+  # 잔차와 조건수가 의미를 갖는다.
+  ring_samples: 600
+  # border_ratio 전용. 앵커가 없으면 관측을 반사율로 되돌릴 기준이 잉크
+  # 하나뿐이라, 잉크 반사율을 가정하고 게인*조도를 역산한다.
+  # dark = 백색 바탕 패드의 흑색 잉크, light = 흑색 바탕 패드의 백색 잉크.
+  assumed_ink_reflectance_dark: 0.06
+  assumed_ink_reflectance_light: 0.88
+
+grid:
+  # 격자 분할 수. 여백이 가로로 긴 직사각형이라 행/열을 따로 둔다.
+  # 기본값은 구획이 거의 정사각이 되도록 잡았다.
+  rows: 8
+  cols: 11
+  # 구획 안에서 유효 픽셀이 이 비율 미만이면 masked 로 배제.
+  min_valid_pixel_ratio: 0.9
+
+exclude:
+  # norm : (max-min) / B  — 조명 불변, 어두운 화소에서 폭주하지 않음
+  # abs  : max - min      — 폭주하지 않지만 노출에 의존
+  # 둘 다 항상 산출해 결과에 담고, 여기서 고른 쪽으로만 배제를 판정한다.
+  chroma_metric: norm
+  max_chroma: null
+  # 구획 안 포화 화소 비율이 이 값을 넘으면 정반사로 보고 배제.
+  max_saturated_ratio: null
+
+score:
+  # 대표값. 평균은 쓰지 않는다 — 국소 오염이 희석된다.
+  # p50~p100 또는 max.
+  statistic: p90
+
+lines:
+  # 선군 대비는 상시 지표가 아니라 실증 비교용이다.
+  enabled: true
+
+target_id:
+  enabled: true
+  # 템플릿 상관 최소값. 미달이면 status=failed 로 반환하되 판독 불가로는
+  # 올리지 않는다.
+  min_confidence: 0.55
+  # 기대 자릿수. null 이면 검출된 만큼 읽는다.
+  digits: null
+
+service:
+  host: 0.0.0.0
+  port: 8911
+
+# 물리 치수. 자료에 없어 비워 둔다. 채우면 mm/px 환산이 결과에 붙는다.
+pad_size_mm: null

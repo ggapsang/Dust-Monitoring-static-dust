@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "padreader"
+version = "0.1.0"
+description = "참조 패드 판독 모듈 — 이미지 1장에서 분진 스코어를 산출한다"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# 서빙은 판독 모듈의 범위 밖이라 별도 extra 로 둔다. 코어 모듈은
+# fastapi/pydantic 을 import 하지 않는다.
+service = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+]
+dev = [
+    "pytest>=7.4",
+    # fastapi.testclient 가 요구한다
+    "httpx2",
+]
+
+[project.scripts]
+padreader-serve = "padservice.__main__:main"
+padreader-generate = "padtools.generate_pad:main"
+padreader-batch = "padtools.batch:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
