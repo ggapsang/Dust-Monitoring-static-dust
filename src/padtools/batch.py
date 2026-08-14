@@ -1,7 +1,7 @@
 """폴더 일괄 판독 CLI.
 
-    python -m padtools.batch images/ --tone white --csv out.csv
-    python -m padtools.batch images/ --tone white --set grid.rows=4 --set score.statistic=max
+    python -m padtools.batch images/ --baseline clean.png --tone white --csv out.csv
+    python -m padtools.batch images/ --baseline clean.png --tone white --set grid.rows=4
 
 임계값이 아직 정해지지 않은 단계라, 같은 이미지 묶음을 설정만 바꿔가며
 반복해서 읽고 분포를 보는 일이 계속 생긴다. 그 루프를 짧게 만드는 것이
@@ -142,6 +142,10 @@ def _summarize(rows: list[dict[str, Any]]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="폴더 일괄 판독")
     parser.add_argument("directory", type=Path)
+    parser.add_argument(
+        "--baseline", type=Path, required=True,
+        help="기준 사진. 패드 부착 직후 깨끗할 때 찍은 것",
+    )
     parser.add_argument("--tone", choices=("white", "black"), required=True)
     parser.add_argument("--csv", type=Path, default=None, help="결과를 쓸 CSV 경로")
     parser.add_argument("--config", type=Path, default=None, help="설정 YAML 경로")
@@ -156,8 +160,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"디렉터리가 아니다: {args.directory}", file=sys.stderr)
         return 1
 
+    if not args.baseline.is_file():
+        print(f"기준 사진이 없다: {args.baseline}", file=sys.stderr)
+        return 1
+
+    baseline = args.baseline.resolve()
     paths = sorted(
-        p for p in args.directory.rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES
+        p
+        for p in args.directory.rglob("*")
+        if p.suffix.lower() in IMAGE_SUFFIXES and p.resolve() != baseline
     )
     if not paths:
         print(f"이미지가 없다: {args.directory}", file=sys.stderr)
@@ -169,7 +180,9 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[dict[str, Any]] = []
     started = time.perf_counter()
     for index, path in enumerate(paths, 1):
-        result = read_pad(path, args.tone, config=config, overrides=overrides)
+        result = read_pad(
+            path, args.baseline, args.tone, config=config, overrides=overrides
+        )
         rows.append(_row(path, result))
         if not args.timing:
             score = result.dust_score

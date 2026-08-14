@@ -38,13 +38,22 @@ def encoded(tone: str, params: CaptureParams = BASE, target_id: str = "1078") ->
     return buffer.tobytes()
 
 
+def baseline_bytes(tone: str, params: CaptureParams = BASE) -> bytes:
+    """기준 사진. 같은 촬영 조건에서 분진만 없는 상태."""
+    return encoded(tone, vary(params, dust_coverage=0.0, clumps=()))
+
+
 def post_read(client, tone: str, params: CaptureParams = BASE, **kwargs):
     overrides = kwargs.pop("overrides", {})
     overrides.setdefault("spec", SPEC_NAME)
+    baseline = kwargs.pop("baseline", None) or baseline_bytes(tone, params)
     return client.post(
         "/read",
         params={"tone": tone, **kwargs},
-        files={"file": ("pad.png", encoded(tone, params), "image/png")},
+        files={
+            "file": ("patrol.png", encoded(tone, params), "image/png"),
+            "baseline": ("clean.png", baseline, "image/png"),
+        },
         data={"config": json.dumps(overrides)},
     )
 
@@ -114,7 +123,7 @@ def test_response_stays_small_by_default(client) -> None:
 def test_summary_reads_like_a_sentence(client) -> None:
     summary = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()["summary"]
     assert "판독 성공" in summary
-    assert "분진 0.19" in summary or "분진 0.20" in summary
+    assert "오염량 +0.19" in summary or "오염량 +0.20" in summary
     assert "ID 1078" in summary
     assert "ms" in summary
 
@@ -127,7 +136,10 @@ def test_summary_explains_failure(client) -> None:
     body = client.post(
         "/read",
         params={"tone": "white"},
-        files={"file": ("blank.png", buffer.tobytes(), "image/png")},
+        files={
+            "file": ("blank.png", buffer.tobytes(), "image/png"),
+            "baseline": ("clean.png", baseline_bytes("white"), "image/png"),
+        },
     ).json()
 
     assert body["success"] is False
@@ -173,14 +185,12 @@ def test_unknown_image_token_is_404(client) -> None:
 
 
 def test_read_by_path_can_return_image_links(client, tmp_path) -> None:
-    image, _ = synthesize(SPEC, "white", vary(BASE, dust_coverage=0.2))
-    path = tmp_path / "pad.png"
-    cv2.imwrite(str(path), image)
-
+    reading, baseline = write_pair(tmp_path, vary(BASE, dust_coverage=0.2))
     body = client.post(
         "/read/path",
         json={
-            "path": str(path),
+            "path": reading,
+            "baseline_path": baseline,
             "tone": "white",
             "visualize": True,
             "config": {"spec": SPEC_NAME},
@@ -188,6 +198,18 @@ def test_read_by_path_can_return_image_links(client, tmp_path) -> None:
     ).json()
     assert body["images"]["overlay"].endswith("/overlay.png")
     assert client.get(body["images"]["overlay"]).status_code == 200
+
+
+def test_baseline_failure_is_reported(client) -> None:
+    """기준 사진을 못 읽으면 그 사실이 사유로 나와야 한다."""
+    blank = np.full((400, 600, 3), 120, np.uint8)
+    ok, buffer = cv2.imencode(".png", blank)
+    assert ok
+
+    body = post_read(client, "white", baseline=buffer.tobytes()).json()
+    assert body["success"] is False
+    assert body["failure_reason"] == "baseline_unreadable"
+    assert "기준 사진을 판독하지 못함" in body["summary"]
 
 
 def test_detail_flag_adds_diagnostics(client) -> None:
@@ -217,7 +239,10 @@ def test_blank_config_means_no_override(client, blank: str) -> None:
     response = client.post(
         "/read",
         params={"tone": "white"},
-        files={"file": ("pad.png", encoded("white"), "image/png")},
+        files={
+            "file": ("patrol.png", encoded("white"), "image/png"),
+            "baseline": ("clean.png", baseline_bytes("white"), "image/png"),
+        },
         data={"config": blank},
     )
     assert response.status_code == 200
@@ -243,7 +268,10 @@ def test_literal_placeholder_config_reports_what_it_got(client) -> None:
     response = client.post(
         "/read",
         params={"tone": "white"},
-        files={"file": ("pad.png", encoded("white"), "image/png")},
+        files={
+            "file": ("patrol.png", encoded("white"), "image/png"),
+            "baseline": ("clean.png", baseline_bytes("white"), "image/png"),
+        },
         data={"config": "string"},
     )
     assert response.status_code == 400
@@ -293,25 +321,55 @@ def test_broken_upload_is_400(client) -> None:
     response = client.post(
         "/read",
         params={"tone": "white"},
-        files={"file": ("junk.png", b"not an image", "image/png")},
+        files={
+            "file": ("junk.png", b"not an image", "image/png"),
+            "baseline": ("clean.png", baseline_bytes("white"), "image/png"),
+        },
     )
     assert response.status_code == 400
 
 
+def write_pair(tmp_path, params=BASE):
+    """(판독 사진 경로, 기준 사진 경로)."""
+    reading, _ = synthesize(SPEC, "white", params)
+    clean, _ = synthesize(SPEC, "white", vary(params, dust_coverage=0.0, clumps=()))
+    reading_path = tmp_path / "patrol.png"
+    baseline_path = tmp_path / "clean.png"
+    cv2.imwrite(str(reading_path), reading)
+    cv2.imwrite(str(baseline_path), clean)
+    return str(reading_path), str(baseline_path)
+
+
 def test_read_by_path(client, tmp_path) -> None:
-    image, _ = synthesize(SPEC, "white", vary(BASE, dust_coverage=0.1))
-    path = tmp_path / "pad.png"
-    cv2.imwrite(str(path), image)
+    reading, baseline = write_pair(tmp_path, vary(BASE, dust_coverage=0.1))
 
     response = client.post(
         "/read/path",
-        json={"path": str(path), "tone": "white", "config": {"spec": SPEC_NAME}},
+        json={
+            "path": reading,
+            "baseline_path": baseline,
+            "tone": "white",
+            "config": {"spec": SPEC_NAME},
+        },
     )
     assert response.status_code == 200
     assert response.json()["success"]
 
-    missing = client.post("/read/path", json={"path": str(tmp_path / "nope.png")})
+    missing = client.post(
+        "/read/path",
+        json={"path": str(tmp_path / "nope.png"), "baseline_path": baseline},
+    )
     assert missing.status_code == 404
+
+
+def test_read_by_path_reports_missing_baseline(client, tmp_path) -> None:
+    reading, _ = write_pair(tmp_path)
+    response = client.post(
+        "/read/path",
+        json={"path": reading, "baseline_path": str(tmp_path / "nope.png")},
+    )
+    assert response.status_code == 404
+    assert "기준 사진" in response.json()["detail"]
 
 
 def test_both_read_endpoints_agree(client, tmp_path) -> None:
@@ -322,15 +380,14 @@ def test_both_read_endpoints_agree(client, tmp_path) -> None:
     가장 나쁜 형태라 여기서 고정한다.
     """
     params = vary(BASE, dust_coverage=0.2)
-    image, _ = synthesize(SPEC, "white", params)
-    path = tmp_path / "pad.png"
-    cv2.imwrite(str(path), image)
+    reading, baseline = write_pair(tmp_path, params)
 
     uploaded = post_read(client, "white", params, detail=True).json()
     by_path = client.post(
         "/read/path",
         json={
-            "path": str(path),
+            "path": reading,
+            "baseline_path": baseline,
             "tone": "white",
             "detail": True,
             "config": {"spec": SPEC_NAME},
@@ -343,12 +400,14 @@ def test_both_read_endpoints_agree(client, tmp_path) -> None:
 
 
 def test_path_request_rejects_unknown_config_key(client, tmp_path) -> None:
-    image, _ = synthesize(SPEC, "white", BASE)
-    path = tmp_path / "pad.png"
-    cv2.imwrite(str(path), image)
-
+    reading, baseline = write_pair(tmp_path)
     response = client.post(
-        "/read/path", json={"path": str(path), "config": {"grid": {"colz": 4}}}
+        "/read/path",
+        json={
+            "path": reading,
+            "baseline_path": baseline,
+            "config": {"grid": {"colz": 4}},
+        },
     )
     assert response.status_code == 400
 

@@ -30,7 +30,10 @@ class ReadPathRequest(BaseModel):
     달라지는데 아무 오류도 나지 않는 것이 가장 나쁜 형태다.
     """
 
-    path: str = Field(description="서버에서 접근 가능한 이미지 경로")
+    path: str = Field(description="판독 사진 경로. 순회 때 찍은 것")
+    baseline_path: str = Field(
+        description="기준 사진 경로. 패드 부착 직후 깨끗할 때 찍은 것"
+    )
     tone: str = Field(default="white", description="white = 백색 바탕/흑색 인쇄")
     visualize: bool = Field(default=False, description="판독 결과 이미지 주소를 함께 받을지")
     detail: bool = Field(default=False, description="품질·정규화 진단값을 포함할지")
@@ -47,6 +50,7 @@ class ReadPathRequest(BaseModel):
             "examples": [
                 {
                     "path": "/data/white_cov20.png",
+                    "baseline_path": "/data/white_cov00.png",
                     "tone": "white",
                     "visualize": True,
                     "detail": False,
@@ -109,7 +113,9 @@ class NormalizationModel(BaseModel):
 class CellModel(BaseModel):
     row: int
     col: int
-    value: float | None
+    value: float | None = Field(default=None, description="판독 − 기준. 이 칸의 오염량")
+    reading: float | None = Field(default=None, description="판독 사진의 값")
+    baseline: float | None = Field(default=None, description="기준 사진의 값")
     reflectance: float | None
     chroma_norm: float | None
     chroma_abs: float | None
@@ -141,7 +147,9 @@ class ReadResponse(BaseModel):
     success: bool
     summary: str = Field(description="사람이 읽는 한 줄 요약")
 
-    dust_score: float | None = Field(default=None, description="분진 오염도. 클수록 심하다.")
+    dust_score: float | None = Field(
+        default=None, description="기준 사진 대비 오염량. 0 이면 그때와 같고 클수록 심하다."
+    )
     score_statistic: str | None = None
     dispersion: DispersionModel = DispersionModel()
 
@@ -179,8 +187,8 @@ class ReadResponse(BaseModel):
             "examples": [
                 {
                     "success": True,
-                    "summary": "판독 성공 · 분진 0.198 (p90) · 산포 0.003 · 제외 0/88칸 · ID 1078 · 312ms",
-                    "dust_score": 0.198,
+                    "summary": "판독 성공 · 오염량 +0.197 (p90) · 산포 0.003 · 제외 0/88칸 · ID 1078 · 612ms",
+                    "dust_score": 0.197,
                     "score_statistic": "p90",
                     "dispersion": {
                         "stdev": 0.0026,
@@ -202,7 +210,7 @@ class ReadResponse(BaseModel):
                     "grid_shape": [8, 11],
                     "excluded_count": 0,
                     "excluded_by_reason": {},
-                    "elapsed_ms": 312.4,
+                    "elapsed_ms": 612.4,
                 }
             ]
         }
@@ -223,6 +231,8 @@ FAILURE_LABELS: dict[str, str] = {
     "quality_anchor_contrast": "조도 기준 대비 부족",
     "no_valid_cells": "측정 가능한 구획 없음",
     "invalid_image": "이미지를 읽을 수 없음",
+    "baseline_unreadable": "기준 사진을 판독하지 못함",
+    "grid_mismatch": "기준 사진과 격자가 어긋남",
 }
 
 
@@ -268,7 +278,7 @@ def build_summary(payload: dict[str, Any]) -> str:
 
     score = payload.get("dust_score")
     if score is not None:
-        parts.append(f"분진 {score:.3f} ({payload.get('score_statistic')})")
+        parts.append(f"오염량 {score:+.3f} ({payload.get('score_statistic')})")
 
     spread = (payload.get("dispersion") or {}).get("p90_minus_p50")
     if spread is not None:

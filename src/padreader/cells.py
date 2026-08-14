@@ -108,7 +108,12 @@ def measure_cells(
             total = block_reflectance.size
             if total == 0:
                 cells.append(
-                    Cell(r, c, None, None, None, None, None, 0.0, ExclusionReason.MASKED)
+                    Cell(
+                        row=r, col=c, value=None, reading=None, baseline=None,
+                        reflectance=None, chroma_norm=None, chroma_abs=None,
+                        saturated_ratio=None, valid_pixel_ratio=0.0,
+                        excluded=ExclusionReason.MASKED,
+                    )
                 )
                 continue
 
@@ -150,6 +155,8 @@ def measure_cells(
                     row=r,
                     col=c,
                     value=None,
+                    reading=None,
+                    baseline=None,
                     reflectance=value,
                     chroma_norm=chroma_norm,
                     chroma_abs=chroma_abs,

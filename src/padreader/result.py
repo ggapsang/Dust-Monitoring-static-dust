@@ -1,7 +1,10 @@
 """판독 결과 객체.
 
-모듈은 상태를 갖지 않으므로 여기에는 **절대 측정값만** 담는다. 청정 상태
-대비 변화량, 시계열 추세, 등급 판정은 전부 상위 계층 몫이다.
+스코어는 **기준 사진 대비 차이**다. 패드 부착 직후 깨끗할 때 찍은 사진과
+이후 순회 때 찍은 사진을 같은 처리로 돌린 뒤, 칸별로 빼서 얻는다. 사진 한
+장의 절대값만으로는 깨끗할 때의 값을 알 수 없어 오염 여부를 판단할 수 없다.
+
+시계열 추세와 등급 판정은 여전히 상위 계층 몫이다.
 
 ``numpy`` 배열을 밖으로 흘리지 않도록 스칼라는 전부 ``float`` 로 변환해
 담는다. ``to_dict()`` 는 그대로 JSON 직렬화 가능한 형태를 돌려준다.
@@ -37,6 +40,12 @@ class FailureReason(str, Enum):
 
     INVALID_IMAGE = "invalid_image"
     """이미지를 읽을 수 없거나 형식이 지원되지 않는다."""
+
+    BASELINE_UNREADABLE = "baseline_unreadable"
+    """기준 사진을 판독하지 못했다. 상세 사유는 ``failure_detail`` 에 담긴다."""
+
+    GRID_MISMATCH = "grid_mismatch"
+    """기준 사진과 판독 사진의 격자가 어긋나 칸을 맞출 수 없다."""
 
 
 class ExclusionReason(str, Enum):
@@ -160,10 +169,18 @@ class Cell:
     row: int
     col: int
     value: float | None
-    """부호 정렬된 오염도. 클수록 오염이 심하다. 배제된 구획은 ``None``."""
+    """오염량. 판독 사진의 오염도에서 기준 사진의 같은 칸 값을 뺀 것이다.
+    0 이면 기준 때와 같고, 클수록 그만큼 더 오염되었다. 어느 한쪽이라도
+    배제된 칸은 ``None``."""
+
+    reading: float | None
+    """판독 사진의 부호 정렬된 오염도."""
+
+    baseline: float | None
+    """기준 사진의 같은 칸 값. 둘의 차가 ``value`` 다."""
 
     reflectance: float | None
-    """정규화 반사율 추정치 rho-hat. 0 = 인쇄색, 1 = 바탕색 기준."""
+    """판독 사진의 정규화 반사율 추정치 rho-hat. 0 = 인쇄색, 1 = 바탕색 기준."""
 
     chroma_norm: float | None
     """``(max-min) / B``. 분모가 화소 자신이 아니라 조도 기준값이라
@@ -185,6 +202,8 @@ class Cell:
             "row": self.row,
             "col": self.col,
             "value": _f(self.value),
+            "reading": _f(self.reading),
+            "baseline": _f(self.baseline),
             "reflectance": _f(self.reflectance),
             "chroma_norm": _f(self.chroma_norm),
             "chroma_abs": _f(self.chroma_abs),
@@ -245,7 +264,7 @@ class PadReadResult:
     failure_detail: str | None = None
 
     dust_score: float | None = None
-    """대표값. 평균이 아니라 상위 분위수 또는 최대다."""
+    """기준 사진 대비 오염량의 대표값. 평균이 아니라 상위 분위수 또는 최대다."""
 
     score_statistic: str | None = None
     """대표값 산출 방식. 예: ``p90``, ``max``. 실증에서 바뀌므로 함께 실어

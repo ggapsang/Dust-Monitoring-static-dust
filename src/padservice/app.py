@@ -137,19 +137,26 @@ def _parse_overrides(raw: str | None) -> dict[str, Any]:
     return parsed
 
 
-def _decode_upload(data: bytes) -> np.ndarray:
+def _decode_upload(data: bytes, label: str) -> np.ndarray:
     if not data:
-        raise HTTPException(400, "빈 파일이다")
+        raise HTTPException(400, f"{label}이 비어 있다")
     image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
-        raise HTTPException(400, "이미지를 디코드할 수 없다. 지원하는 형식인지 확인한다.")
+        raise HTTPException(400, f"{label}을 디코드할 수 없다. 지원하는 형식인지 확인한다.")
     return image
 
 
-def _run(image: np.ndarray, tone: str, overrides: dict[str, Any], visualize: bool):
+def _run(
+    image: np.ndarray,
+    baseline: np.ndarray,
+    tone: str,
+    overrides: dict[str, Any],
+    visualize: bool,
+):
     try:
         return read_pad(
             image,
+            baseline,
             pad_tone=tone,
             config=_BASE_CONFIG,
             overrides=overrides,
@@ -189,7 +196,10 @@ def get_config() -> dict[str, Any]:
 @app.post("/read", response_model=ReadResponse, summary="판독 (이미지 업로드)")
 async def read(
     request: Request,
-    file: Annotated[UploadFile, File(description="패드가 찍힌 이미지")],
+    file: Annotated[UploadFile, File(description="판독 사진. 순회 때 찍은 것")],
+    baseline: Annotated[
+        UploadFile, File(description="기준 사진. 패드 부착 직후 깨끗할 때 찍은 것")
+    ],
     tone: Annotated[str, Query(description="white = 백색 바탕/흑색 인쇄")] = "white",
     visualize: Annotated[
         bool, Query(description="켜면 응답의 images 에 판독 결과 이미지 주소가 들어온다")
@@ -214,16 +224,20 @@ async def read(
         ),
     ] = "",
 ) -> ReadResponse:
-    """이미지를 올려 판독한다.
+    """기준 사진과 견주어 판독 사진의 오염량을 낸다.
 
+    두 사진은 같은 관측 포인트에서 같은 카메라로 찍은 것이어야 한다.
     응답 맨 위의 ``summary`` 한 줄만 봐도 결과를 알 수 있다.
     """
     overrides = _parse_overrides(config)
-    image = _decode_upload(await file.read())
+    reading = _decode_upload(await file.read(), "판독 사진")
+    baseline_image = _decode_upload(await baseline.read(), "기준 사진")
 
     # OpenCV 연산이 GIL 을 오래 잡는 구간이 있어 이벤트 루프에서 직접 돌리지
-    # 않는다. 한 장이 0.5초라 워커가 막히면 바로 체감된다.
-    result = await run_in_threadpool(_run, image, tone, overrides, visualize)
+    # 않는다. 두 장을 처리하므로 1초 가까이 걸린다.
+    result = await run_in_threadpool(
+        _run, reading, baseline_image, tone, overrides, visualize
+    )
     return to_response(
         result.to_dict(include_cells=include_cells),
         detail=detail,
@@ -234,16 +248,20 @@ async def read(
 
 @app.post("/read/path", response_model=ReadResponse, summary="판독 (서버 경로)")
 async def read_path(request: Request, body: ReadPathRequest) -> ReadResponse:
-    """서버에 이미 있는 이미지를 경로로 지정해 판독한다.
+    """서버에 이미 있는 두 사진을 경로로 지정해 판독한다.
 
-    같은 이미지·같은 설정이면 ``/read`` 와 같은 값이 나온다.
+    같은 사진·같은 설정이면 ``/read`` 와 같은 값이 나온다.
     """
-    image = cv2.imread(body.path, cv2.IMREAD_COLOR)
-    if image is None:
-        raise HTTPException(404, f"이미지를 읽을 수 없다: {body.path}")
+    reading = cv2.imread(body.path, cv2.IMREAD_COLOR)
+    if reading is None:
+        raise HTTPException(404, f"판독 사진을 읽을 수 없다: {body.path}")
+
+    baseline = cv2.imread(body.baseline_path, cv2.IMREAD_COLOR)
+    if baseline is None:
+        raise HTTPException(404, f"기준 사진을 읽을 수 없다: {body.baseline_path}")
 
     result = await run_in_threadpool(
-        _run, image, body.tone, body.config or {}, body.visualize
+        _run, reading, baseline, body.tone, body.config or {}, body.visualize
     )
     return to_response(
         result.to_dict(include_cells=body.include_cells),

@@ -33,10 +33,34 @@ def soiling(reflectance: float, tone: str) -> float:
 
 
 def apply_soiling(cells: list[Cell], tone: str) -> None:
-    """구획의 ``value`` 를 오염도로 채운다. 배제된 구획은 그대로 둔다."""
+    """각 구획의 ``reading`` 에 그 사진의 오염도를 채운다."""
     for cell in cells:
         if cell.excluded is None and cell.reflectance is not None:
-            cell.value = soiling(cell.reflectance, tone)
+            cell.reading = soiling(cell.reflectance, tone)
+
+
+def subtract_baseline(reading: list[Cell], baseline: list[Cell]) -> list[Cell]:
+    """판독 사진의 칸값에서 기준 사진의 같은 칸값을 뺀다.
+
+    이 차이가 오염량이다. 사진 한 장의 절대값은 깨끗할 때 얼마였는지를
+    모르면 해석할 수 없다 — 인쇄 농도, 패드 재질, 카메라 개체차가 모두
+    섞여 있기 때문이다. 같은 패드를 같은 카메라로 찍은 두 장을 빼면 그
+    공통분이 사라지고 그 사이에 쌓인 양만 남는다.
+
+    어느 한쪽이라도 배제된 칸은 뺄 수 없으므로 함께 배제한다. 그 칸이
+    왜 빠졌는지는 배제된 쪽의 사유를 따른다.
+    """
+    combined: list[Cell] = []
+    for read_cell, base_cell in zip(reading, baseline):
+        read_cell.baseline = base_cell.reading
+        excluded = read_cell.excluded or base_cell.excluded
+        read_cell.excluded = excluded
+        if excluded is None and read_cell.reading is not None and base_cell.reading is not None:
+            read_cell.value = read_cell.reading - base_cell.reading
+        else:
+            read_cell.value = None
+        combined.append(read_cell)
+    return combined
 
 
 def _statistic(values: np.ndarray, spec: str) -> float:
