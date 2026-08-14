@@ -32,6 +32,7 @@ class ReadPathRequest(BaseModel):
 
     path: str = Field(description="서버에서 접근 가능한 이미지 경로")
     tone: str = Field(default="white", description="white = 백색 바탕/흑색 인쇄")
+    visualize: bool = Field(default=False, description="판독 결과 이미지 주소를 함께 받을지")
     detail: bool = Field(default=False, description="품질·정규화 진단값을 포함할지")
     include_cells: bool = Field(default=False, description="구획별 값을 포함할지")
     config: dict[str, Any] | None = Field(
@@ -47,6 +48,7 @@ class ReadPathRequest(BaseModel):
                 {
                     "path": "/data/white_cov20.png",
                     "tone": "white",
+                    "visualize": True,
                     "detail": False,
                     "include_cells": False,
                     "config": {"spec": "v2_protected"},
@@ -59,6 +61,13 @@ class ReadPathRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # 응답 조각
 # ---------------------------------------------------------------------------
+
+
+class ImageLinks(BaseModel):
+    """판독 결과 이미지 주소. 브라우저에 그대로 붙여 넣으면 보인다."""
+
+    overlay: str = Field(description="격자·측정 영역·구획별 오염도를 겹쳐 그린 이미지")
+    rectified: str = Field(description="정면으로 펴기만 한 이미지")
 
 
 class DispersionModel(BaseModel):
@@ -140,6 +149,10 @@ class ReadResponse(BaseModel):
     target_id_status: str | None = None
     target_id_confidence: float | None = None
 
+    images: ImageLinks | None = Field(
+        default=None, description="visualize=true 일 때만. 주소를 열면 이미지가 나온다."
+    )
+
     failure_reason: str | None = None
     failure_detail: str | None = None
 
@@ -177,6 +190,10 @@ class ReadResponse(BaseModel):
                     "target_id": "1078",
                     "target_id_status": "ok",
                     "target_id_confidence": 0.912,
+                    "images": {
+                        "overlay": "http://localhost:8911/images/1253f37a150c69ee/overlay.png",
+                        "rectified": "http://localhost:8911/images/1253f37a150c69ee/rectified.png",
+                    },
                     "failure_reason": None,
                     "failure_detail": None,
                     "pad_tone": "white",
@@ -272,7 +289,11 @@ def build_summary(payload: dict[str, Any]) -> str:
 
 
 def to_response(
-    payload: dict[str, Any], *, detail: bool, include_cells: bool
+    payload: dict[str, Any],
+    *,
+    detail: bool,
+    include_cells: bool,
+    images: ImageLinks | None = None,
 ) -> ReadResponse:
     """판독 결과 사전을 응답 모델로. 요청한 부분만 채운다."""
     result = ReadResponse(
@@ -284,6 +305,7 @@ def to_response(
         target_id=payload.get("target_id"),
         target_id_status=payload.get("target_id_status"),
         target_id_confidence=_r(payload.get("target_id_confidence"), 3),
+        images=images,
         failure_reason=payload.get("failure_reason"),
         failure_detail=payload.get("failure_detail"),
         pad_tone=payload.get("pad_tone"),

@@ -72,7 +72,13 @@ def test_config_exposes_values_and_source(client) -> None:
 def test_endpoints_are_only_what_was_agreed(client) -> None:
     """합의된 것 외의 경로가 늘어나 있지 않은지 고정한다."""
     paths = set(client.get("/openapi.json").json()["paths"])
-    assert paths == {"/healthz", "/config", "/read", "/read/path"}, sorted(paths)
+    assert paths == {
+        "/healthz",
+        "/config",
+        "/read",
+        "/read/path",
+        "/images/{token}/{kind}.png",
+    }, sorted(paths)
 
 
 @pytest.mark.parametrize("tone", ("white", "black"))
@@ -128,6 +134,60 @@ def test_summary_explains_failure(client) -> None:
     assert body["summary"].startswith("판독 불가")
     assert "패드를 찾지 못함" in body["summary"]
     assert body["failure_reason"] == "pad_not_found"
+
+
+def test_visualize_returns_image_links(client) -> None:
+    """이미지는 주소로 준다. 본문에 base64 를 실으면 응답을 읽을 수 없다."""
+    plain = post_read(client, "white").json()
+    assert plain["images"] is None
+
+    body = post_read(client, "white", visualize=True).json()
+    assert body["images"]["overlay"].endswith("/overlay.png")
+    assert body["images"]["rectified"].endswith("/rectified.png")
+    assert len(json.dumps(body)) < 1500, "주소 대신 이미지가 실려 온 것 아닌지"
+
+
+def test_image_links_actually_serve_png(client) -> None:
+    body = post_read(client, "white", visualize=True).json()
+
+    for kind in ("overlay", "rectified"):
+        response = client.get(body["images"][kind])
+        assert response.status_code == 200, kind
+        assert response.headers["content-type"] == "image/png"
+
+        image = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
+        assert image is not None and image.shape[0] == image.shape[1] == 1120
+
+
+def test_image_link_is_stable_for_the_same_input(client) -> None:
+    """같은 입력이면 같은 주소. 주소가 이미지 내용의 해시이기 때문이다."""
+    first = post_read(client, "white", visualize=True).json()
+    second = post_read(client, "white", visualize=True).json()
+    assert first["images"] == second["images"]
+
+
+def test_unknown_image_token_is_404(client) -> None:
+    response = client.get("/images/deadbeefdeadbeef/overlay.png")
+    assert response.status_code == 404
+    assert "다시 판독" in response.json()["detail"]
+
+
+def test_read_by_path_can_return_image_links(client, tmp_path) -> None:
+    image, _ = synthesize(SPEC, "white", vary(BASE, dust_coverage=0.2))
+    path = tmp_path / "pad.png"
+    cv2.imwrite(str(path), image)
+
+    body = client.post(
+        "/read/path",
+        json={
+            "path": str(path),
+            "tone": "white",
+            "visualize": True,
+            "config": {"spec": SPEC_NAME},
+        },
+    ).json()
+    assert body["images"]["overlay"].endswith("/overlay.png")
+    assert client.get(body["images"]["overlay"]).status_code == 200
 
 
 def test_detail_flag_adds_diagnostics(client) -> None:
