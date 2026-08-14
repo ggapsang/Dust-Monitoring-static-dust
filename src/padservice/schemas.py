@@ -30,10 +30,7 @@ class ReadPathRequest(BaseModel):
     달라지는데 아무 오류도 나지 않는 것이 가장 나쁜 형태다.
     """
 
-    paths: list[str] = Field(
-        description="서버에서 접근 가능한 이미지 경로. 여러 개를 한 번에 넣을 수 있다.",
-        min_length=1,
-    )
+    path: str = Field(description="서버에서 접근 가능한 이미지 경로")
     tone: str = Field(default="white", description="white = 백색 바탕/흑색 인쇄")
     detail: bool = Field(default=False, description="품질·정규화 진단값을 포함할지")
     include_cells: bool = Field(default=False, description="구획별 값을 포함할지")
@@ -48,7 +45,7 @@ class ReadPathRequest(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
-                    "paths": ["/data/white_cov00.png", "/data/white_cov20.png"],
+                    "path": "/data/white_cov20.png",
                     "tone": "white",
                     "detail": False,
                     "include_cells": False,
@@ -125,14 +122,13 @@ class LineContrastModel(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ReadResult(BaseModel):
+class ReadResponse(BaseModel):
     """이미지 한 장의 판독 결과.
 
     판독 불가도 오류가 아니다. 요청 자체는 정상이었고 이미지가 기준에 못
     미친 것이므로, 그 구분을 ``success`` 로 표현한다.
     """
 
-    file: str = Field(description="어느 이미지의 결과인지")
     success: bool
     summary: str = Field(description="사람이 읽는 한 줄 요약")
 
@@ -165,45 +161,31 @@ class ReadResult(BaseModel):
     # include_cells=true 일 때만
     cells: list[CellModel] | None = None
 
-
-class BatchResponse(BaseModel):
-    """판독 응답. 한 장을 보내도 여러 장을 보내도 같은 형태다."""
-
-    summary: str = Field(description="전체를 한 줄로. 먼저 이것만 봐도 된다.")
-    count: int
-    succeeded: int
-    results: list[ReadResult]
-
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
-                    "summary": "2장 모두 판독 성공 · 분진 0.001 ~ 0.198 · 0.8초",
-                    "count": 2,
-                    "succeeded": 2,
-                    "results": [
-                        {
-                            "file": "white_cov00.png",
-                            "success": True,
-                            "summary": "판독 성공 · 분진 0.001 (p90) · 산포 0.000 · 제외 0/88칸 · ID 1078 · 402ms",
-                            "dust_score": 0.0006,
-                            "score_statistic": "p90",
-                            "dispersion": {
-                                "stdev": 0.0003,
-                                "iqr": 0.0004,
-                                "p90_minus_p50": 0.0004,
-                            },
-                            "target_id": "1078",
-                            "target_id_status": "ok",
-                            "target_id_confidence": 0.912,
-                            "pad_tone": "white",
-                            "spec_name": "v2_protected",
-                            "rotation_deg": 0,
-                            "grid_shape": [8, 11],
-                            "excluded_count": 0,
-                            "elapsed_ms": 402.1,
-                        }
-                    ],
+                    "success": True,
+                    "summary": "판독 성공 · 분진 0.198 (p90) · 산포 0.003 · 제외 0/88칸 · ID 1078 · 312ms",
+                    "dust_score": 0.198,
+                    "score_statistic": "p90",
+                    "dispersion": {
+                        "stdev": 0.0026,
+                        "iqr": 0.0042,
+                        "p90_minus_p50": 0.0033,
+                    },
+                    "target_id": "1078",
+                    "target_id_status": "ok",
+                    "target_id_confidence": 0.912,
+                    "failure_reason": None,
+                    "failure_detail": None,
+                    "pad_tone": "white",
+                    "spec_name": "v2_protected",
+                    "rotation_deg": 0,
+                    "grid_shape": [8, 11],
+                    "excluded_count": 0,
+                    "excluded_by_reason": {},
+                    "elapsed_ms": 312.4,
                 }
             ]
         }
@@ -289,46 +271,11 @@ def build_summary(payload: dict[str, Any]) -> str:
     return " · ".join(parts) + tail
 
 
-def build_batch_summary(results: list[ReadResult], elapsed_sec: float) -> str:
-    """여러 장을 한 줄로 요약한다.
-
-    한 장뿐이면 그 한 장의 요약을 그대로 쓴다. 굳이 '1장 중 1장' 이라고
-    말할 이유가 없다.
-    """
-    if len(results) == 1:
-        return results[0].summary
-
-    ok = [r for r in results if r.success]
-    if len(ok) == len(results):
-        head = f"{len(results)}장 모두 판독 성공"
-    else:
-        failed: dict[str, int] = {}
-        for result in results:
-            if not result.success:
-                label = FAILURE_LABELS.get(
-                    result.failure_reason or "", result.failure_reason or "알 수 없음"
-                )
-                failed[label] = failed.get(label, 0) + 1
-        breakdown = ", ".join(f"{label} {count}" for label, count in failed.items())
-        head = f"{len(results)}장 중 {len(ok)}장 성공, {len(results) - len(ok)}장 판독 불가 ({breakdown})"
-
-    parts = [head]
-    scores = [r.dust_score for r in ok if r.dust_score is not None]
-    if scores:
-        if len(scores) == 1:
-            parts.append(f"분진 {scores[0]:.3f}")
-        else:
-            parts.append(f"분진 {min(scores):.3f} ~ {max(scores):.3f}")
-    parts.append(f"{elapsed_sec:.1f}초")
-    return " · ".join(parts)
-
-
-def to_result(
-    name: str, payload: dict[str, Any], *, detail: bool, include_cells: bool
-) -> ReadResult:
+def to_response(
+    payload: dict[str, Any], *, detail: bool, include_cells: bool
+) -> ReadResponse:
     """판독 결과 사전을 응답 모델로. 요청한 부분만 채운다."""
-    result = ReadResult(
-        file=name,
+    result = ReadResponse(
         success=payload["success"],
         summary=build_summary(payload),
         dust_score=_r(payload.get("dust_score")),

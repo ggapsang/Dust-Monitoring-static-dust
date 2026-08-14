@@ -18,7 +18,7 @@ from padtools.synth import CaptureParams, synthesize, vary
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
-from padservice.app import MAX_BATCH, app  # noqa: E402
+from padservice.app import app  # noqa: E402
 
 SPEC_NAME = "v2_protected"
 SPEC = spec.SPECS[SPEC_NAME]
@@ -39,26 +39,14 @@ def encoded(tone: str, params: CaptureParams = BASE, target_id: str = "1078") ->
 
 
 def post_read(client, tone: str, params: CaptureParams = BASE, **kwargs):
-    """이미지 한 장 업로드."""
-    return post_many(client, [("pad.png", encoded(tone, params))], tone, **kwargs)
-
-
-def post_many(client, blobs: list[tuple[str, bytes]], tone: str = "white", **kwargs):
     overrides = kwargs.pop("overrides", {})
     overrides.setdefault("spec", SPEC_NAME)
     return client.post(
         "/read",
         params={"tone": tone, **kwargs},
-        files=[("files", (name, blob, "image/png")) for name, blob in blobs],
+        files={"file": ("pad.png", encoded(tone, params), "image/png")},
         data={"config": json.dumps(overrides)},
     )
-
-
-def only(response) -> dict:
-    """한 장짜리 응답에서 그 한 장의 결과를 꺼낸다."""
-    body = response.json()
-    assert body["count"] == 1, body
-    return body["results"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -81,80 +69,20 @@ def test_config_exposes_values_and_source(client) -> None:
     assert body["source"] is None or body["source"].endswith(".yaml")
 
 
+def test_endpoints_are_only_what_was_agreed(client) -> None:
+    """합의된 것 외의 경로가 늘어나 있지 않은지 고정한다."""
+    paths = set(client.get("/openapi.json").json()["paths"])
+    assert paths == {"/healthz", "/config", "/read", "/read/path"}, sorted(paths)
+
+
 @pytest.mark.parametrize("tone", ("white", "black"))
 def test_read_returns_score(client, tone: str) -> None:
-    result = only(post_read(client, tone, vary(BASE, dust_coverage=0.2)))
-    assert result["success"], result
-    assert result["dust_score"] == pytest.approx(0.2, abs=0.05)
-    assert result["pad_tone"] == tone
-    assert result["spec_name"] == SPEC_NAME
-    assert result["target_id"] == "1078"
-    assert result["file"] == "pad.png"
-
-
-# ---------------------------------------------------------------------------
-# 여러 장 한 번에
-# ---------------------------------------------------------------------------
-
-
-def test_reads_many_images_in_one_request(client) -> None:
-    blobs = [
-        (f"cov{int(c * 100):02d}.png", encoded("white", vary(BASE, dust_coverage=c)))
-        for c in (0.0, 0.2, 0.5)
-    ]
-    body = post_many(client, blobs).json()
-
-    assert body["count"] == 3
-    assert body["succeeded"] == 3
-    assert [r["file"] for r in body["results"]] == [name for name, _ in blobs]
-
-    # 도포량이 늘수록 스코어도 커져야 한다.
-    scores = [r["dust_score"] for r in body["results"]]
-    assert scores == sorted(scores), scores
-
-
-def test_batch_summary_covers_the_whole_request(client) -> None:
-    blobs = [
-        (f"cov{int(c * 100):02d}.png", encoded("white", vary(BASE, dust_coverage=c)))
-        for c in (0.0, 0.5)
-    ]
-    summary = post_many(client, blobs).json()["summary"]
-    assert "2장 모두 판독 성공" in summary
-    assert "~" in summary, "스코어 범위가 보여야 한다"
-    assert "초" in summary
-
-
-def test_single_image_summary_is_not_padded_with_counts(client) -> None:
-    """한 장이면 '1장 중 1장' 같은 군더더기 없이 그 한 장의 요약을 쓴다."""
-    body = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()
-    assert body["summary"] == body["results"][0]["summary"]
-    assert body["summary"].startswith("판독 성공")
-
-
-def test_one_broken_image_does_not_sink_the_rest(client) -> None:
-    """한 장이 깨져도 나머지는 그대로 판독해야 한다."""
-    blobs = [
-        ("good.png", encoded("white", vary(BASE, dust_coverage=0.2))),
-        ("junk.png", b"not an image"),
-        ("good2.png", encoded("white", vary(BASE, dust_coverage=0.5))),
-    ]
-    body = post_many(client, blobs).json()
-
-    assert body["count"] == 3
-    assert body["succeeded"] == 2
-    assert body["results"][1]["success"] is False
-    assert body["results"][1]["failure_reason"] == "invalid_image"
-    assert body["results"][0]["dust_score"] is not None
-    assert body["results"][2]["dust_score"] is not None
-    assert "2장 성공" in body["summary"] and "1장 판독 불가" in body["summary"]
-
-
-def test_batch_size_is_capped(client) -> None:
-    blob = encoded("white")
-    blobs = [(f"{i}.png", blob) for i in range(MAX_BATCH + 1)]
-    response = post_many(client, blobs)
-    assert response.status_code == 400
-    assert str(MAX_BATCH) in response.json()["detail"]
+    body = post_read(client, tone, vary(BASE, dust_coverage=0.2)).json()
+    assert body["success"], body
+    assert body["dust_score"] == pytest.approx(0.2, abs=0.05)
+    assert body["pad_tone"] == tone
+    assert body["spec_name"] == SPEC_NAME
+    assert body["target_id"] == "1078"
 
 
 # ---------------------------------------------------------------------------
@@ -164,16 +92,21 @@ def test_batch_size_is_capped(client) -> None:
 
 def test_default_response_is_compact(client) -> None:
     """기본 응답에 무거운 것이 딸려오지 않아야 한다."""
-    result = only(post_read(client, "white", vary(BASE, dust_coverage=0.2)))
+    body = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()
     for heavy in ("cells", "quality", "normalization", "line_contrasts", "corners"):
-        assert result[heavy] is None, heavy
+        assert body[heavy] is None, heavy
 
     for key in ("success", "summary", "dust_score", "dispersion", "target_id", "elapsed_ms"):
-        assert result[key] is not None, key
+        assert body[key] is not None, key
+
+
+def test_response_stays_small_by_default(client) -> None:
+    body = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()
+    assert len(json.dumps(body)) < 1200, "기본 응답이 여전히 무겁다"
 
 
 def test_summary_reads_like_a_sentence(client) -> None:
-    summary = only(post_read(client, "white", vary(BASE, dust_coverage=0.2)))["summary"]
+    summary = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()["summary"]
     assert "판독 성공" in summary
     assert "분진 0.19" in summary or "분진 0.20" in summary
     assert "ID 1078" in summary
@@ -185,87 +118,32 @@ def test_summary_explains_failure(client) -> None:
     ok, buffer = cv2.imencode(".png", blank)
     assert ok
 
-    result = only(post_many(client, [("blank.png", buffer.tobytes())]))
-    assert result["success"] is False
-    assert result["summary"].startswith("판독 불가")
-    assert "패드를 찾지 못함" in result["summary"]
-    assert result["failure_reason"] == "pad_not_found"
+    body = client.post(
+        "/read",
+        params={"tone": "white"},
+        files={"file": ("blank.png", buffer.tobytes(), "image/png")},
+    ).json()
+
+    assert body["success"] is False
+    assert body["summary"].startswith("판독 불가")
+    assert "패드를 찾지 못함" in body["summary"]
+    assert body["failure_reason"] == "pad_not_found"
 
 
 def test_detail_flag_adds_diagnostics(client) -> None:
-    result = only(post_read(client, "white", detail=True))
-    assert result["quality"]["tilt_deg"] is not None
-    assert result["normalization"]["method"] == "two_point"
-    assert len(result["line_contrasts"]) == len(SPEC.line_bars)
-    assert len(result["corners"]) == 4
-    assert result["rotation_margin"] is not None
-    assert result["cells"] is None, "detail 은 구획까지 켜지 않는다"
+    body = post_read(client, "white", detail=True).json()
+    assert body["quality"]["tilt_deg"] is not None
+    assert body["normalization"]["method"] == "two_point"
+    assert len(body["line_contrasts"]) == len(SPEC.line_bars)
+    assert len(body["corners"]) == 4
+    assert body["rotation_margin"] is not None
+    assert body["cells"] is None, "detail 은 구획까지 켜지 않는다"
 
 
 def test_include_cells_flag_adds_cells(client) -> None:
-    result = only(post_read(client, "white", include_cells=True))
-    assert len(result["cells"]) == 8 * 11
-    assert result["quality"] is None, "구획 요청이 진단값까지 켜지 않는다"
-
-
-def test_response_stays_small_by_default(client) -> None:
-    body = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()
-    assert len(json.dumps(body)) < 1500, "기본 응답이 여전히 무겁다"
-
-
-def test_no_image_cache_endpoints(client) -> None:
-    """토큰으로 이미지를 꺼내 가는 경로는 없어야 한다.
-
-    이미지를 서버에 보관하지 않는다는 뜻이다. 필요할 때 바로 만들어 준다.
-    """
-    paths = client.get("/openapi.json").json()["paths"]
-    assert not [p for p in paths if p.startswith("/images")], paths
-
-
-# ---------------------------------------------------------------------------
-# 판독 결과 이미지
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("kind", ("overlay", "rectified"))
-def test_read_image_returns_png(client, kind: str) -> None:
-    """무엇을 어디서 쟀는지 눈으로 볼 수 있어야 한다."""
-    response = client.post(
-        "/read/image",
-        params={"tone": "white", "kind": kind},
-        files={"file": ("pad.png", encoded("white", vary(BASE, dust_coverage=0.2)), "image/png")},
-        data={"config": json.dumps({"spec": SPEC_NAME})},
-    )
-    assert response.status_code == 200, response.text
-    assert response.headers["content-type"] == "image/png"
-
-    image = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
-    assert image is not None
-    assert image.shape[0] == image.shape[1] == 1120
-
-
-def test_read_image_rejects_unknown_kind(client) -> None:
-    response = client.post(
-        "/read/image",
-        params={"tone": "white", "kind": "nope"},
-        files={"file": ("pad.png", encoded("white"), "image/png")},
-    )
-    assert response.status_code == 400
-
-
-def test_read_image_explains_when_unreadable(client) -> None:
-    """판독을 못 하면 빈 이미지를 주는 대신 이유를 말한다."""
-    blank = np.full((400, 600, 3), 120, np.uint8)
-    ok, buffer = cv2.imencode(".png", blank)
-    assert ok
-
-    response = client.post(
-        "/read/image",
-        params={"tone": "white"},
-        files={"file": ("blank.png", buffer.tobytes(), "image/png")},
-    )
-    assert response.status_code == 422
-    assert "패드를 찾지 못함" in response.json()["detail"]
+    body = post_read(client, "white", include_cells=True).json()
+    assert len(body["cells"]) == 8 * 11
+    assert body["quality"] is None, "구획 요청이 진단값까지 켜지 않는다"
 
 
 # ---------------------------------------------------------------------------
@@ -279,11 +157,11 @@ def test_blank_config_means_no_override(client, blank: str) -> None:
     response = client.post(
         "/read",
         params={"tone": "white"},
-        files=[("files", ("pad.png", encoded("white"), "image/png"))],
+        files={"file": ("pad.png", encoded("white"), "image/png")},
         data={"config": blank},
     )
     assert response.status_code == 200
-    assert only(response)["spec_name"] == "v2"
+    assert response.json()["spec_name"] == "v2"
 
 
 def test_config_form_field_defaults_to_blank(client) -> None:
@@ -305,7 +183,7 @@ def test_literal_placeholder_config_reports_what_it_got(client) -> None:
     response = client.post(
         "/read",
         params={"tone": "white"},
-        files=[("files", ("pad.png", encoded("white"), "image/png"))],
+        files={"file": ("pad.png", encoded("white"), "image/png")},
         data={"config": "string"},
     )
     assert response.status_code == 400
@@ -315,20 +193,20 @@ def test_literal_placeholder_config_reports_what_it_got(client) -> None:
 
 
 def test_bad_config_is_400(client) -> None:
-    response = post_read(client, "white", overrides={"no_such_key": 1})
-    assert response.status_code == 400
+    assert post_read(client, "white", overrides={"no_such_key": 1}).status_code == 400
 
 
 def test_overrides_do_not_leak_between_requests(client) -> None:
+    """요청 오버라이드가 서버 설정을 바꾸면 안 된다."""
     before = client.get("/config").json()
 
-    changed = only(
-        post_read(client, "white", overrides={"spec": SPEC_NAME, "grid": {"rows": 3, "cols": 3}})
-    )
+    changed = post_read(
+        client, "white", overrides={"spec": SPEC_NAME, "grid": {"rows": 3, "cols": 3}}
+    ).json()
     assert changed["grid_shape"] == [3, 3]
 
     assert client.get("/config").json() == before
-    assert only(post_read(client, "white"))["grid_shape"] == [8, 11]
+    assert post_read(client, "white").json()["grid_shape"] == [8, 11]
 
 
 # ---------------------------------------------------------------------------
@@ -339,10 +217,8 @@ def test_overrides_do_not_leak_between_requests(client) -> None:
 def strip_timing(body: dict) -> dict:
     """매번 달라지는 시간 항목을 걷어낸다."""
     body = json.loads(json.dumps(body))
-    body.pop("summary")
-    for result in body["results"]:
-        result.pop("elapsed_ms")
-        result["summary"] = result["summary"].rsplit(" · ", 1)[0]
+    body.pop("elapsed_ms")
+    body["summary"] = body["summary"].rsplit(" · ", 1)[0]
     return body
 
 
@@ -353,6 +229,15 @@ def test_repeated_requests_agree(client) -> None:
     assert strip_timing(first) == strip_timing(second)
 
 
+def test_broken_upload_is_400(client) -> None:
+    response = client.post(
+        "/read",
+        params={"tone": "white"},
+        files={"file": ("junk.png", b"not an image", "image/png")},
+    )
+    assert response.status_code == 400
+
+
 def test_read_by_path(client, tmp_path) -> None:
     image, _ = synthesize(SPEC, "white", vary(BASE, dust_coverage=0.1))
     path = tmp_path / "pad.png"
@@ -360,30 +245,13 @@ def test_read_by_path(client, tmp_path) -> None:
 
     response = client.post(
         "/read/path",
-        json={"paths": [str(path)], "tone": "white", "config": {"spec": SPEC_NAME}},
+        json={"path": str(path), "tone": "white", "config": {"spec": SPEC_NAME}},
     )
     assert response.status_code == 200
-    assert only(response)["success"]
+    assert response.json()["success"]
 
-
-def test_read_by_path_reports_missing_file_per_item(client, tmp_path) -> None:
-    """없는 파일 하나 때문에 나머지가 죽으면 안 된다."""
-    image, _ = synthesize(SPEC, "white", vary(BASE, dust_coverage=0.1))
-    path = tmp_path / "pad.png"
-    cv2.imwrite(str(path), image)
-
-    body = client.post(
-        "/read/path",
-        json={
-            "paths": [str(path), str(tmp_path / "nope.png")],
-            "tone": "white",
-            "config": {"spec": SPEC_NAME},
-        },
-    ).json()
-
-    assert body["count"] == 2 and body["succeeded"] == 1
-    assert body["results"][0]["success"] is True
-    assert body["results"][1]["failure_reason"] == "invalid_image"
+    missing = client.post("/read/path", json={"path": str(tmp_path / "nope.png")})
+    assert missing.status_code == 404
 
 
 def test_both_read_endpoints_agree(client, tmp_path) -> None:
@@ -398,18 +266,16 @@ def test_both_read_endpoints_agree(client, tmp_path) -> None:
     path = tmp_path / "pad.png"
     cv2.imwrite(str(path), image)
 
-    uploaded = only(post_read(client, "white", params, detail=True))
-    by_path = only(
-        client.post(
-            "/read/path",
-            json={
-                "paths": [str(path)],
-                "tone": "white",
-                "detail": True,
-                "config": {"spec": SPEC_NAME},
-            },
-        )
-    )
+    uploaded = post_read(client, "white", params, detail=True).json()
+    by_path = client.post(
+        "/read/path",
+        json={
+            "path": str(path),
+            "tone": "white",
+            "detail": True,
+            "config": {"spec": SPEC_NAME},
+        },
+    ).json()
 
     assert uploaded["spec_name"] == by_path["spec_name"] == SPEC_NAME
     assert uploaded["normalization"]["method"] == by_path["normalization"]["method"]
@@ -422,7 +288,7 @@ def test_path_request_rejects_unknown_config_key(client, tmp_path) -> None:
     cv2.imwrite(str(path), image)
 
     response = client.post(
-        "/read/path", json={"paths": [str(path)], "config": {"grid": {"colz": 4}}}
+        "/read/path", json={"path": str(path), "config": {"grid": {"colz": 4}}}
     )
     assert response.status_code == 400
 
