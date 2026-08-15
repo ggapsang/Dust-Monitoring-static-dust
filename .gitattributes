@@ -1,1 +1,2 @@
 assets/samples/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+dashboard/img/*.jpg filter=lfs diff=lfs merge=lfs -text

@@ -34,6 +34,7 @@ dev = [
 padreader-serve = "padservice.__main__:main"
 padreader-generate = "padtools.generate_pad:main"
 padreader-batch = "padtools.batch:main"
+padreader-dashboard = "padtools.dashboard:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

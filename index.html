@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AMR 관측 기록 — 분진 판독 관제</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="dashboard/data.js"></script>
+<style>
+:root{
+  --bg:#F4F1EC; --panel:#FFFFFF; --panel2:#FBFAF8; --panel3:#F2F0EC;
+  --line:#E7E3DD; --line2:#D9D4CC;
+  --tx:#1C1917; --tx2:#57534E; --tx3:#8B857D;
+  --pri:#F86517; --pri6:#F14D0D; --pri-t:#FDECDF; --pri-tx:#C2360C;
+  --ok:#2563EB; --ok-t:#E4EDFD; --ok-tx:#1D4ED8;
+  --warn:#F59E0B; --warn-t:#FBF0DC; --warn-tx:#B45309;
+  --err:#EF4444; --err-t:#FCE7E7; --err-tx:#B91C1C;
+  --sh:0 1px 2px rgba(28,25,23,.05), 0 3px 10px rgba(28,25,23,.045);
+  --r:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:"Pretendard",system-ui,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+button{font-family:inherit;cursor:pointer}
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-thumb{background:#D9D4CC;border-radius:6px;border:3px solid var(--bg)}
+::-webkit-scrollbar-track{background:transparent}
+
+.app{display:grid;grid-template-columns:240px 1fr;grid-template-rows:58px 1fr;height:100vh;min-height:0}
+.topbar{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:0 22px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:11px;width:218px;flex:0 0 auto}
+.brand .dot{width:28px;height:28px;border-radius:7px;background:var(--pri);display:grid;place-items:center;font-weight:800;font-size:14px;color:#fff;box-shadow:0 2px 6px rgba(248,101,23,.35)}
+.brand b{font-weight:700;letter-spacing:-.01em;font-size:15px}
+.sel{display:flex;align-items:center;gap:8px;padding:8px 13px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;font-size:13px;font-weight:600;color:var(--tx)}
+.sel small{color:var(--tx3);font-weight:500}
+.spacer{flex:1}
+.clock{color:var(--tx2);font-size:13px;font-weight:500}
+
+.nav{background:var(--panel);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;gap:3px;overflow:auto}
+.nav .grp{color:var(--tx3);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:16px 12px 8px}
+.nav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:9px;color:var(--tx2);text-decoration:none;font-size:14px;font-weight:600;border:1px solid transparent;cursor:pointer}
+.nav a:hover{background:var(--panel3);color:var(--tx)}
+.nav a.on{background:var(--pri-t);color:var(--pri6);border-color:#F8D5BC}
+.nav a .ic{width:18px;height:18px;flex:0 0 auto}
+.nav .foot{margin-top:auto;padding:14px 12px 4px;color:var(--tx3);font-size:12px;line-height:1.7;border-top:1px solid var(--line)}
+
+.main{overflow:auto;padding:28px 30px 48px;min-width:0}
+.wrap{max-width:1360px;margin:0 auto}
+.view{display:none}
+.view.on{display:block}
+.head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px}
+.head h1{font-size:24px;font-weight:800;letter-spacing:-.02em;margin:0 0 5px}
+.head p{margin:0;color:var(--tx3);font-size:13.5px}
+
+.note{background:#FFFBF4;border:1px solid #F3E2C7;border-radius:var(--r);padding:13px 17px;margin-bottom:18px;font-size:13px;color:#8A6A2F;line-height:1.65}
+.note b{color:#6F5322}
+
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sh)}
+.kpi .lb{color:var(--tx3);font-size:12px;font-weight:700;margin-bottom:12px}
+.kpi .vv{font-size:32px;font-weight:800;letter-spacing:-.02em;line-height:1}
+.kpi .vv small{font-size:14px;color:var(--tx3);font-weight:600;margin-left:4px}
+.kpi.acc .vv{color:var(--pri6)}
+.kpi .sub{margin-top:10px;font-size:12px;color:var(--tx3);font-weight:500}
+.kpi .bar{margin-top:12px;height:6px;border-radius:4px;background:var(--panel3);overflow:hidden}
+.kpi .bar i{display:block;height:100%;border-radius:4px}
+
+.ptstrip{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}
+.ptc{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 18px;box-shadow:var(--sh);cursor:pointer}
+.ptc:hover{border-color:var(--line2)}
+.ptc .t{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ptc .t b{font-size:15px;font-weight:800;letter-spacing:-.01em}
+.ptc .t .meta{color:var(--tx3);font-size:12px;font-weight:600}
+.ptc .spark{height:52px;margin:6px 0 4px}
+.ptc .spark svg{width:100%;height:52px;display:block}
+.ptc .lg{display:flex;gap:14px;margin-top:8px;font-size:11.5px;color:var(--tx2);font-weight:600}
+.ptc .lg em{font-style:normal;color:var(--tx3);font-weight:500}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh);margin-bottom:18px}
+.card .ch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line)}
+.card .ch h3{margin:0;font-size:15px;font-weight:800;letter-spacing:-.01em}
+.card .ch .rt{color:var(--tx3);font-size:12.5px;font-weight:500}
+.card .cb{padding:18px 20px}
+
+table{width:100%;border-collapse:collapse}
+thead th{text-align:left;color:var(--tx3);font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel2)}
+tbody td{padding:13px 16px;border-bottom:1px solid var(--line);font-size:14px;color:var(--tx)}
+tbody tr{cursor:pointer;transition:background .08s}
+tbody tr:hover{background:var(--panel2)}
+tbody tr:last-child td{border-bottom:none}
+td.r,th.r{text-align:right}
+.tid{font-weight:800;font-variant-numeric:tabular-nums}
+.muted{color:var(--tx3)}
+.sc{font-variant-numeric:tabular-nums;font-weight:700;font-size:14.5px}
+.sc.tot{font-weight:800;font-size:15px}
+.delta{font-variant-numeric:tabular-nums;font-weight:700;font-size:13.5px}
+.delta.up{color:var(--pri6)} .delta.flat{color:var(--tx3)}
+
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.pill .d{width:7px;height:7px;border-radius:50%}
+.pill.ok{background:var(--ok-t);color:var(--ok-tx)}       .pill.ok .d{background:var(--ok)}
+.pill.warn{background:var(--warn-t);color:var(--warn-tx)} .pill.warn .d{background:var(--warn)}
+.pill.err{background:var(--err-t);color:var(--err-tx)}    .pill.err .d{background:var(--err)}
+.pill.pri{background:var(--pri-t);color:var(--pri-tx)}    .pill.pri .d{background:var(--pri)}
+.pill.n{background:var(--panel3);color:var(--tx2);border:1px solid var(--line2)} .pill.n .d{background:var(--tx3)}
+
+.color{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600}
+.color .sw{width:13px;height:13px;border-radius:50%;border:1px solid var(--line2)}
+.color.black .sw{background:#26221E} .color.white .sw{background:#FCFBFA;border-color:#CFCAC2}
+
+.detail{display:grid;grid-template-columns:230px 1fr;gap:18px;align-items:start}
+.ptlist{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}
+.ptlist .lh{padding:13px 16px;border-bottom:1px solid var(--line);font-size:11.5px;font-weight:700;color:var(--tx3);letter-spacing:.04em;text-transform:uppercase}
+.ptlist a{display:flex;align-items:center;gap:11px;padding:12px 16px;border-bottom:1px solid var(--line);color:var(--tx2);font-size:14px;font-weight:600;cursor:pointer}
+.ptlist a:last-child{border-bottom:none}
+.ptlist a:hover{background:var(--panel2);color:var(--tx)}
+.ptlist a.on{background:var(--pri-t);color:var(--pri6)}
+.ptlist a .dt{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.ptlist a .n{margin-left:auto;font-size:11px;color:var(--tx3);font-weight:600}
+
+.dhead{display:flex;align-items:center;gap:0;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 20px;margin-bottom:18px;box-shadow:var(--sh)}
+.dhead .id{padding-right:20px}
+.dhead .nm{font-size:18px;font-weight:800;letter-spacing:-.01em}
+.dhead .lo{color:var(--tx3);font-size:13px;margin-top:2px}
+.dhead .chip{display:flex;flex-direction:column;gap:5px;padding:4px 18px;border-left:1px solid var(--line);min-width:86px}
+.dhead .chip .cl{color:var(--tx3);font-size:11.5px;font-weight:700}
+.dhead .chip .cv{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.dhead .chip.tot .cv{color:var(--pri6)}
+
+.seq{display:flex;gap:6px;flex-wrap:wrap}
+.seq button{padding:7px 13px;border-radius:7px;border:1px solid var(--line2);background:var(--panel2);color:var(--tx2);font-size:13px;font-weight:700}
+.seq button.on{background:var(--pri-t);border-color:#F8D5BC;color:var(--pri6)}
+
+.photos{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}
+.tile .tcap{padding:11px 15px;font-size:13px;font-weight:700;color:var(--tx);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tile .tcap span{color:var(--tx3);font-size:11px;font-weight:500;text-align:right}
+.tile .thost{aspect-ratio:1/1;display:grid;place-items:center;background:#EBE7E1}
+.tile .thost img{width:100%;height:100%;object-fit:cover;display:block}
+.tile .thost .none{color:var(--tx3);font-size:12.5px}
+
+.legend{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--tx2);font-weight:600}
+.legend .grad{width:120px;height:9px;border-radius:5px;background:linear-gradient(90deg,#00007F,#0000FF,#00FFFF,#7FFF7F,#FFFF00,#FF0000,#7F0000)}
+
+.trendhead{display:flex;gap:10px;align-items:center}
+.seg{display:flex;gap:4px}
+.seg button{padding:7px 14px;border-radius:7px;border:1px solid var(--line2);background:var(--panel2);color:var(--tx2);font-size:13px;font-weight:700}
+.seg button.on{background:var(--pri-t);border-color:#F8D5BC;color:var(--pri6)}
+
+.setgrid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+.field{padding:15px 0;border-bottom:1px solid var(--line)}
+.field:last-child{border-bottom:none}
+.field .fl{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:5px}
+.field .fl b{font-size:14px;font-weight:700}
+.field .fl .hint{color:var(--tx3);font-size:12px}
+.field .desc{color:var(--tx3);font-size:12.5px;margin-bottom:11px;max-width:56ch;line-height:1.55}
+.rangebox{display:flex;align-items:center;gap:14px}
+input[type=range]{-webkit-appearance:none;appearance:none;height:5px;border-radius:3px;background:var(--panel3);flex:1;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--pri);border:3px solid #fff;box-shadow:0 1px 4px rgba(28,25,23,.25);cursor:pointer}
+.rangebox output{min-width:64px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;font-size:15px}
+.gradebar{display:flex;height:38px;border-radius:8px;overflow:hidden;border:1px solid var(--line2);margin-top:5px;font-size:12.5px;font-weight:800}
+.gradebar div{display:grid;place-items:center;color:#fff}
+.formula{font-variant-numeric:tabular-nums;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:12px 14px;font-size:14px;color:var(--tx2);font-weight:500}
+.formula b{color:var(--pri6);font-weight:800}
+
+.cfg{width:100%;border-collapse:collapse}
+.cfg th{text-align:left;padding:9px 14px;font-size:11.5px;color:var(--tx3);font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--panel2);border-bottom:1px solid var(--line)}
+.cfg td{padding:10px 14px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:top}
+.cfg td.k{font-weight:700;white-space:nowrap;width:1%}
+.cfg td.v{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap;width:1%;text-align:right}
+.cfg td.d{color:var(--tx3);font-size:12.5px;line-height:1.5}
+.cfg .off{color:var(--tx3);font-weight:600}
+.cfg tr:last-child td{border-bottom:none}
+
+.err-screen{max-width:640px;margin:80px auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:28px 32px;box-shadow:var(--sh)}
+.err-screen h2{margin:0 0 12px;font-size:19px}
+.err-screen code{background:var(--panel3);padding:2px 7px;border-radius:5px;font-size:13px}
+
+@media(max-width:1200px){.kpis{grid-template-columns:repeat(3,1fr)}.ptstrip{grid-template-columns:1fr}.detail,.setgrid{grid-template-columns:1fr}.photos{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="dot">D</span><b>AMR 관측 기록</b></div>
+    <div class="sel"><small>현장</small> 에코프로비엠 포항</div>
+    <div class="sel"><small>데이터</small> <span id="srcLabel">—</span></div>
+    <div class="spacer"></div>
+    <div class="clock num" id="clock">—</div>
+  </header>
+
+  <nav class="nav">
+    <div class="grp">운영</div>
+    <a class="on" data-view="dash"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg> 대시보드</a>
+    <a data-view="detail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h18"/></svg> 관측 포인트 판독</a>
+    <a data-view="history"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg> 판정 이력</a>
+    <div class="grp">관리</div>
+    <a data-view="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1l-.4-2.5H9.6l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4.8l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg> 설정</a>
+    <div class="foot">방식 · 참조 패드 광학 측정<br/>지표 · 고름 / 국소 / 종합<br/><span id="footSrc">표본 대기</span></div>
+  </nav>
+
+  <main class="main">
+  <div class="wrap">
+
+  <!-- 대시보드 -->
+  <section class="view on" id="dash">
+    <div class="head">
+      <div><h1>분진 판독 대시보드</h1><p>개소마다 부착 직후 기준 사진을 두고, 회차마다 그 대비 침착량을 낸다 · 종합 = 고름 + 국소 − 고름 × 국소</p></div>
+    </div>
+    <div class="note" id="dashNote"></div>
+    <div class="kpis" id="kpiRow"></div>
+    <div class="ptstrip" id="ptStrip"></div>
+    <div class="card">
+      <div class="ch"><h3>관측 포인트 현황</h3><span class="rt" id="dashRt"></span></div>
+      <table>
+        <thead><tr>
+          <th style="width:88px">개소</th><th>표본</th><th>톤</th><th class="r">회차</th>
+          <th class="r">고름</th><th class="r">국소</th><th class="r">종합</th>
+          <th class="r">직전 대비</th><th class="r">누적</th><th>상태</th>
+        </tr></thead>
+        <tbody id="dashBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 관측 포인트 판독 -->
+  <section class="view" id="detail">
+    <div class="head">
+      <div><h1>관측 포인트 판독</h1><p>기준 정합 사진 · 판독 정합 사진 · 오염도 분포 사진</p></div>
+    </div>
+    <div class="detail">
+      <div class="ptlist">
+        <div class="lh">관측 포인트</div>
+        <div id="ptList"></div>
+      </div>
+      <div>
+        <div class="dhead" id="dHead"></div>
+        <div class="card">
+          <div class="ch"><h3>회차 선택</h3><div class="seq" id="seqSeg"></div></div>
+        </div>
+        <div class="photos">
+          <div class="tile"><div class="tcap">기준 정합 <span id="capBase">부착 직후</span></div><div class="thost" id="ph_base"></div></div>
+          <div class="tile"><div class="tcap">판독 정합 <span id="capCur">—</span></div><div class="thost" id="ph_cur"></div></div>
+          <div class="tile"><div class="tcap">오염도 분포 <span id="capViz">기준 대비</span></div><div class="thost" id="ph_viz"></div></div>
+        </div>
+        <div class="card">
+          <div class="ch"><h3>분포 이미지 읽는 법</h3></div>
+          <div class="cb">
+            <div class="legend"><span>깨끗</span><span class="grad"></span><span id="heatTop">심함</span></div>
+            <div class="desc" style="color:var(--tx3);font-size:12.5px;margin-top:11px;line-height:1.6">
+              기준 사진 대비 그 자리가 얼마나 어두워졌는지를 색으로 칠한다. 색 범위는 고정이라
+              두 장을 색으로 바로 견줄 수 있다. 초록 사각형이 측정 영역이며, 그 바깥의 인쇄물은
+              측정에서 빠진다.
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ch">
+            <h3>회차별 추이</h3>
+            <div class="trendhead">
+              <div class="seg" id="trendSeg">
+                <button class="on" data-mode="abs">절대량</button>
+                <button data-mode="delta">추세</button>
+                <button data-mode="cusum">누적</button>
+              </div>
+            </div>
+          </div>
+          <div class="cb"><div style="height:280px"><canvas id="trend"></canvas></div>
+            <div id="trendDesc" style="color:var(--tx3);font-size:12.5px;margin-top:14px;line-height:1.6"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ch"><h3>회차 판독 상세</h3><span class="rt">품질 산출값과 제외 화소</span></div>
+          <table><thead><tr>
+            <th style="width:64px">회차</th><th>파일</th><th class="r">고름</th><th class="r">국소</th><th class="r">종합</th>
+            <th class="r">선명도</th><th class="r">패드 크기</th><th class="r">크기 차이</th><th class="r">제외 화소</th><th>ID</th>
+          </tr></thead><tbody id="detBody"></tbody></table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 판정 이력 -->
+  <section class="view" id="history">
+    <div class="head"><div><h1>판정 이력</h1><p>전 개소 · 전 회차. 개소 간 종합값 직접 비교는 성립하지 않는다 — 등급으로만 견준다</p></div></div>
+    <div class="card">
+      <div class="ch"><h3>전체 판독</h3><span class="rt" id="histCount"></span></div>
+      <table>
+        <thead><tr>
+          <th style="width:88px">개소</th><th class="r">회차</th><th>파일</th>
+          <th class="r">고름</th><th class="r">국소</th><th class="r">종합</th>
+          <th class="r">직전 대비</th><th class="r">누적</th><th>상태</th><th class="r">소요</th>
+        </tr></thead>
+        <tbody id="histBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 설정 -->
+  <section class="view" id="settings">
+    <div class="head"><div><h1>설정</h1><p>위쪽은 대시보드가 쓰는 판정 임계값, 아래쪽은 이 표본을 판독할 때 실제로 적용된 판독기 설정</p></div></div>
+
+    <div class="setgrid">
+      <div class="card"><div class="ch"><h3>등급 임계값</h3><span class="rt">종합 기준</span></div>
+        <div class="cb">
+          <div class="gradebar" id="gradeBar"></div>
+          <div class="field"><div class="fl"><b>정상 → 주의 경계</b><span class="hint">종합</span></div>
+            <div class="rangebox"><input type="range" min="0" max="1" step="0.01" value="0.15" id="t1"><output id="t1o">0.15</output></div></div>
+          <div class="field"><div class="fl"><b>주의 → 경고 경계</b><span class="hint">종합</span></div>
+            <div class="rangebox"><input type="range" min="0" max="1" step="0.01" value="0.30" id="t2"><output id="t2o">0.30</output></div></div>
+          <div class="field"><div class="desc" style="margin:0">실증 전 잠정값이다. 표본 14회차의 종합이 0.008~0.360 범위라
+            그 안에서 세 등급이 갈리도록 잡아 두었다. 개소마다 촬영 거리·각도·조명이 고정이라 감도가 다르므로,
+            개소 간 비교는 이 등급 수준에서만 성립한다.</div></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="ch"><h3>추세 · 누적 판정</h3><span class="rt">개소별 자기 기준선</span></div>
+        <div class="cb">
+          <div class="field"><div class="fl"><b>추세 이상 배수</b><span class="hint">중앙값 + n × MAD</span></div>
+            <div class="desc">회차 간 차분의 중앙값을 그 개소의 평상시로 보고, 흩어진 정도(MAD)의 몇 배를 넘으면
+              급성 오염으로 본다. 개소마다 자기 이력에서 산출하므로 임계를 개소별로 정해 줄 필요가 없다.</div>
+            <div class="rangebox"><input type="range" min="1" max="6" step="0.5" value="3" id="kmad"><output id="kmado">3.0</output></div></div>
+          <div class="field"><div class="fl"><b>누적 여유</b><span class="hint">CUSUM slack</span></div>
+            <div class="desc">회차마다 이만큼의 증가는 정상 변동으로 보고 빼고 더한다. 작게 잡으면 미세한 만성
+              침착도 누적값이 올라가고, 크게 잡으면 확실히 늘 때만 올라간다.</div>
+            <div class="rangebox"><input type="range" min="0" max="0.1" step="0.005" value="0.02" id="slack"><output id="slacko">0.020</output></div></div>
+          <div class="field"><div class="fl"><b>종합 지표</b></div>
+            <div class="formula">종합 = <b>고름 + 국소 − 고름 × 국소</b></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <div class="ch"><h3>판독기 설정</h3><span class="rt">이 표본을 판독할 때 적용된 값 · 조회 전용</span></div>
+      <table class="cfg"><thead><tr><th>항목</th><th style="text-align:right">값</th><th>설명</th></tr></thead>
+      <tbody id="cfgBody"></tbody></table>
+    </div>
+  </section>
+
+  </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+const D = window.PADDATA;
+
+/* 데이터가 없으면 무엇을 해야 하는지 화면에 적는다. 빈 대시보드만 뜨면
+   생성기를 안 돌린 것인지 판독이 실패한 것인지 알 수 없다. */
+if (!D || !D.points || !D.points.length) {
+  document.body.innerHTML = `<div class="err-screen">
+    <h2>표본 데이터가 없다</h2>
+    <p>이 화면은 <code>dashboard/data.js</code> 를 읽는다. 아직 만들지 않았거나 비어 있다.</p>
+    <p>저장소 루트에서 아래를 돌리면 <code>assets/samples/</code> 의 사진을 판독해 만든다.</p>
+    <p><code>python -m padtools.dashboard</code></p>
+  </div>`;
+  throw new Error("PADDATA 없음");
+}
+
+/* ------------------------------------------------------------------ */
+/* 판정 파라미터. 설정 화면에서 바꾼다.                                  */
+/* ------------------------------------------------------------------ */
+const P = { t1: 0.15, t2: 0.30, kmad: 3.0, slack: 0.02 };
+
+const ST   = { '정상':'ok', '주의':'warn', '경고':'err', '판독불가':'n' };
+const STC  = { '정상':'var(--ok-tx)', '주의':'var(--warn-tx)', '경고':'var(--err-tx)', '판독불가':'var(--tx3)' };
+const STDOT= { '정상':'#2563EB', '주의':'#F59E0B', '경고':'#EF4444', '판독불가':'#8B857D' };
+
+const f2 = v => (v == null ? '—' : v.toFixed(2));
+const f3 = v => (v == null ? '—' : v.toFixed(3));
+const dash = '<span class="muted">—</span>';
+
+function median(xs) {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function mad(xs) {
+  if (!xs.length) return 0;
+  const m = median(xs);
+  return median(xs.map(x => Math.abs(x - m)));
+}
+function grade(total) {
+  if (total == null) return '판독불가';
+  return total < P.t1 ? '정상' : total < P.t2 ? '주의' : '경고';
+}
+function stPill(s) { return `<span class="pill ${ST[s]}"><span class="d"></span>${s}</span>`; }
+function toneCell(t) {
+  return `<span class="color ${t}"><span class="sw"></span>${t === 'black' ? '흑색 바탕' : '백색 바탕'}</span>`;
+}
+function imgSrc(rel) { return 'dashboard/' + rel; }
+
+/* ------------------------------------------------------------------ */
+/* 파생값. 절대량 · 추세 · 누적을 개소마다 낸다.                          */
+/*                                                                     */
+/*   절대량  기준 사진 대비 지금까지 쌓인 총량 (종합 그대로)              */
+/*   추세    직전 회차 대비 증분. 급성 오염은 여기가 튄다                 */
+/*   누적    증분에서 여유를 뺀 값을 계속 더한다 (CUSUM). 회차마다 조금씩 */
+/*           늘어 개별 회차로는 안 잡히는 만성 침착을 잡는다              */
+/* ------------------------------------------------------------------ */
+function derive() {
+  for (const pt of D.points) {
+    let prev = 0, cusum = 0;
+    for (const r of pt.readings) {
+      if (!r.success) { r.delta = null; r.cusum = cusum; r.grade = '판독불가'; continue; }
+      const c = r.scores.combined;
+      r.delta = c - prev;
+      cusum = Math.max(0, cusum + r.delta - P.slack);
+      r.cusum = cusum;
+      r.grade = grade(c);
+      prev = c;
+    }
+    const deltas = pt.readings.filter(r => r.delta != null).map(r => r.delta);
+    // 자기 기준선. 표본이 몇 회차뿐이라 흩어짐이 0 에 가까울 수 있어
+    // 바닥을 둔다. 그러지 않으면 어떤 증분이든 이상으로 잡힌다.
+    const spread = Math.max(mad(deltas) * 1.4826, 0.005);
+    pt.deltaLimit = median(deltas) + P.kmad * spread;
+    for (const r of pt.readings) r.deltaAlert = r.delta != null && r.delta > pt.deltaLimit;
+    pt.last = [...pt.readings].reverse().find(r => r.success) || null;
+    pt.grade = pt.last ? grade(pt.last.scores.combined) : '판독불가';
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 대시보드                                                            */
+/* ------------------------------------------------------------------ */
+function sparkline(pt) {
+  const rs = pt.readings.filter(r => r.success);
+  if (rs.length < 2) return '';
+  const W = 260, H = 52, pad = 3;
+  const max = Math.max(P.t2 * 1.05, ...rs.map(r => r.scores.combined));
+  const x = i => pad + (W - 2 * pad) * i / (rs.length - 1);
+  const y = v => H - pad - (H - 2 * pad) * (v / max);
+  const pts = rs.map((r, i) => `${x(i).toFixed(1)},${y(r.scores.combined).toFixed(1)}`).join(' ');
+  const area = `${pad},${H - pad} ${pts} ${x(rs.length - 1).toFixed(1)},${H - pad}`;
+  const line = (v, col) => v < max
+    ? `<line x1="${pad}" y1="${y(v).toFixed(1)}" x2="${W - pad}" y2="${y(v).toFixed(1)}" stroke="${col}" stroke-width="1" stroke-dasharray="4 3" opacity=".75"/>` : '';
+  const dots = rs.map((r, i) =>
+    `<circle cx="${x(i).toFixed(1)}" cy="${y(r.scores.combined).toFixed(1)}" r="${i === rs.length - 1 ? 3.4 : 2}" fill="${STDOT[r.grade]}"/>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <polygon points="${area}" fill="rgba(248,101,23,.10)"/>
+    ${line(P.t1, '#F59E0B')}${line(P.t2, '#EF4444')}
+    <polyline points="${pts}" fill="none" stroke="#F86517" stroke-width="2" stroke-linejoin="round"/>
+    ${dots}</svg>`;
+}
+
+function renderDash() {
+  const pts = D.points;
+  const ok = pts.filter(p => p.grade === '정상').length;
+  const wn = pts.filter(p => p.grade === '주의').length;
+  const er = pts.filter(p => p.grade === '경고').length;
+  const readings = pts.reduce((n, p) => n + p.readings.length, 0);
+  const failed = pts.reduce((n, p) => n + p.readings.filter(r => !r.success).length, 0);
+  const top = Math.max(...pts.map(p => (p.last ? p.last.scores.combined : 0)));
+
+  document.getElementById('kpiRow').innerHTML = `
+   <div class="kpi"><div class="lb">관측 개소</div><div class="vv num">${pts.length}<small>개소</small></div>
+     <div class="sub">표본 ${D.source}</div></div>
+   <div class="kpi"><div class="lb">판독 회차</div><div class="vv num">${readings}</div>
+     <div class="sub">${failed ? `판독 불가 ${failed}건` : '전건 판독 성공'}</div></div>
+   <div class="kpi"><div class="lb">정상</div><div class="vv num" style="color:var(--ok-tx)">${ok}</div>
+     <div class="bar"><i style="width:${ok / pts.length * 100}%;background:var(--ok)"></i></div></div>
+   <div class="kpi"><div class="lb">주의</div><div class="vv num" style="color:var(--warn-tx)">${wn}</div>
+     <div class="bar"><i style="width:${wn / pts.length * 100}%;background:var(--warn)"></i></div></div>
+   <div class="kpi"><div class="lb">경고</div><div class="vv num" style="color:var(--err-tx)">${er}</div>
+     <div class="bar"><i style="width:${er / pts.length * 100}%;background:var(--err)"></i></div></div>
+   <div class="kpi acc"><div class="lb">최신 회차 최고 종합</div><div class="vv num">${top.toFixed(2)}</div>
+     <div class="sub">등급 경계 ${P.t1.toFixed(2)} / ${P.t2.toFixed(2)}</div></div>`;
+
+  document.getElementById('ptStrip').innerHTML = pts.map(p => {
+    const n = p.readings.length;
+    const last = p.last;
+    return `<div class="ptc" data-id="${p.id}">
+      <div class="t"><b>${p.id}</b><span class="meta">${n}회차 · ${p.set}</span></div>
+      <div class="spark">${sparkline(p)}</div>
+      <div class="lg">
+        <span><em>종합</em> ${last ? last.scores.combined.toFixed(3) : '—'}</span>
+        <span><em>누적</em> ${last ? last.cusum.toFixed(3) : '—'}</span>
+        <span style="margin-left:auto">${stPill(p.grade)}</span>
+      </div></div>`;
+  }).join('');
+  document.querySelectorAll('.ptc').forEach(c => c.onclick = () => { selectPoint(c.dataset.id); go('detail'); });
+
+  document.getElementById('dashBody').innerHTML = pts.map(p => {
+    const r = p.last;
+    if (!r) return `<tr data-id="${p.id}"><td class="tid">${p.id}</td><td>${p.set}</td>
+      <td>${toneCell(p.tone)}</td><td class="r muted num">${p.readings.length}</td>
+      <td class="r" colspan="5">${dash}</td><td>${stPill('판독불가')}</td></tr>`;
+    return `<tr data-id="${p.id}">
+      <td class="tid">${p.id}</td><td>${p.set}</td><td>${toneCell(p.tone)}</td>
+      <td class="r muted num">${r.seq} / ${p.readings.length}</td>
+      <td class="r"><span class="sc">${r.scores.uniform.toFixed(3)}</span></td>
+      <td class="r"><span class="sc">${r.scores.localized.toFixed(3)}</span></td>
+      <td class="r"><span class="sc tot" style="color:${STC[p.grade]}">${r.scores.combined.toFixed(3)}</span></td>
+      <td class="r"><span class="delta ${r.deltaAlert ? 'up' : 'flat'}">+${r.delta.toFixed(3)}${r.deltaAlert ? ' ▲' : ''}</span></td>
+      <td class="r"><span class="delta flat">${r.cusum.toFixed(3)}</span></td>
+      <td>${stPill(p.grade)}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('#dashBody tr').forEach(tr =>
+    tr.onclick = () => { selectPoint(tr.dataset.id); go('detail'); });
+
+  document.getElementById('dashRt').textContent = `개소마다 최신 회차 기준`;
+  document.getElementById('dashNote').innerHTML =
+    `<b>표본 화면이다.</b> AMR 순회가 아직 없어 <code>assets/samples/</code> 의 실촬영 사진을
+     판독기에 그대로 넣은 결과를 늘어놓았다. 개소 하나가 표본 폴더 하나이고, 회차는 그 안의
+     촬영 순서다. 시각·설비 위치·AMR 배정은 아직 없다.`;
+}
+
+/* ------------------------------------------------------------------ */
+/* 판정 이력                                                           */
+/* ------------------------------------------------------------------ */
+function renderHistory() {
+  const rows = [];
+  for (const p of D.points) {
+    for (const r of p.readings) {
+      if (!r.success) {
+        rows.push(`<tr data-id="${p.id}"><td class="tid">${p.id}</td><td class="r num">${r.seq}</td>
+          <td class="muted">${r.source}</td><td class="r" colspan="5">${r.failure_detail || dash}</td>
+          <td>${stPill('판독불가')}</td><td class="r muted num">${r.elapsed_ms}ms</td></tr>`);
+        continue;
+      }
+      rows.push(`<tr data-id="${p.id}">
+        <td class="tid">${p.id}</td><td class="r num">${r.seq}</td><td class="muted">${r.source}</td>
+        <td class="r"><span class="sc">${r.scores.uniform.toFixed(3)}</span></td>
+        <td class="r"><span class="sc">${r.scores.localized.toFixed(3)}</span></td>
+        <td class="r"><span class="sc tot" style="color:${STC[r.grade]}">${r.scores.combined.toFixed(3)}</span></td>
+        <td class="r"><span class="delta ${r.deltaAlert ? 'up' : 'flat'}">+${r.delta.toFixed(3)}${r.deltaAlert ? ' ▲' : ''}</span></td>
+        <td class="r"><span class="delta flat">${r.cusum.toFixed(3)}</span></td>
+        <td>${stPill(r.grade)}</td><td class="r muted num">${r.elapsed_ms}ms</td></tr>`);
+    }
+  }
+  document.getElementById('histBody').innerHTML = rows.join('');
+  document.getElementById('histCount').textContent = `${D.points.length}개소 · ${rows.length}회차`;
+  document.querySelectorAll('#histBody tr').forEach(tr =>
+    tr.onclick = () => { selectPoint(tr.dataset.id); go('detail'); });
+}
+
+/* ------------------------------------------------------------------ */
+/* 관측 포인트 판독                                                     */
+/* ------------------------------------------------------------------ */
+// curSeq 가 null 이면 그 개소의 마지막 회차를 고른다. 처음 열었을 때
+// 1회차가 아니라 지금 상태가 보여야 한다.
+let curId = D.points[0].id, curSeq = null, chart = null, trendMode = 'abs';
+
+function renderPtList() {
+  document.getElementById('ptList').innerHTML = D.points.map(p =>
+    `<a data-id="${p.id}"><span class="dt" style="background:${STDOT[p.grade]}"></span>
+      <span class="tid">${p.id}</span><span class="n">${p.readings.length}회차</span></a>`).join('');
+  document.querySelectorAll('#ptList a').forEach(a => a.onclick = () => selectPoint(a.dataset.id));
+}
+
+function selectPoint(id, seq) {
+  const p = D.points.find(x => x.id === id);
+  if (!p) return;
+  curId = id;
+  const success = p.readings.filter(r => r.success);
+  curSeq = seq != null ? seq : (success.length ? success[success.length - 1].seq : 1);
+
+  document.querySelectorAll('#ptList a').forEach(a => a.classList.toggle('on', a.dataset.id === id));
+
+  const r = p.readings.find(x => x.seq === curSeq);
+  document.getElementById('dHead').innerHTML = `
+    <div class="id"><div class="nm">${p.id}</div><div class="lo">${p.set} · 기준 ${p.baseline_source}</div></div>
+    <div class="chip"><span class="cl">톤</span><span class="cv" style="font-size:13px">${toneCell(p.tone)}</span></div>
+    <div class="chip"><span class="cl">회차</span><span class="cv">${curSeq}<span style="font-size:13px;color:var(--tx3)"> / ${p.readings.length}</span></span></div>
+    <div class="chip"><span class="cl">고름</span><span class="cv">${r.success ? r.scores.uniform.toFixed(3) : '—'}</span></div>
+    <div class="chip"><span class="cl">국소</span><span class="cv">${r.success ? r.scores.localized.toFixed(3) : '—'}</span></div>
+    <div class="chip tot"><span class="cl">종합</span><span class="cv">${r.success ? r.scores.combined.toFixed(3) : '—'}</span></div>
+    <div class="chip"><span class="cl">누적</span><span class="cv">${r.cusum.toFixed(3)}</span></div>
+    <div class="chip"><span class="cl">상태</span><span class="cv" style="font-size:12px">${stPill(r.grade)}</span></div>`;
+
+  document.getElementById('seqSeg').innerHTML = p.readings.map(x =>
+    `<button class="${x.seq === curSeq ? 'on' : ''}" data-seq="${x.seq}">${x.seq}회차</button>`).join('');
+  document.querySelectorAll('#seqSeg button').forEach(b =>
+    b.onclick = () => selectPoint(curId, +b.dataset.seq));
+
+  const tile = (host, src, alt) => {
+    document.getElementById(host).innerHTML = src
+      ? `<img src="${imgSrc(src)}" alt="${alt}" loading="lazy">`
+      : `<div class="none">이미지 없음</div>`;
+  };
+  tile('ph_base', p.baseline_image, '기준 정합');
+  tile('ph_cur', r.success ? r.images.rectified : null, '판독 정합');
+  tile('ph_viz', r.success ? r.images.distribution : null, '오염도 분포');
+  document.getElementById('capBase').textContent = p.baseline_source;
+  document.getElementById('capCur').textContent = r.source;
+  document.getElementById('capViz').textContent = r.success ? `종합 ${r.scores.combined.toFixed(3)}` : '판독 불가';
+
+  const hm = D.config && D.config.visualize ? D.config.visualize.heat_max : null;
+  document.getElementById('heatTop').textContent = hm ? `심함 (${hm})` : '심함';
+
+  document.getElementById('detBody').innerHTML = p.readings.map(x => {
+    if (!x.success) return `<tr><td class="tid">${x.seq}</td><td class="muted">${x.source}</td>
+      <td class="r muted" colspan="8">${x.failure_detail || '판독 불가'}</td></tr>`;
+    const ex = Object.values(x.excluded_px || {}).reduce((a, b) => a + b, 0);
+    return `<tr>
+      <td class="tid">${x.seq}</td><td class="muted">${x.source}</td>
+      <td class="r num">${x.scores.uniform.toFixed(3)}</td>
+      <td class="r num">${x.scores.localized.toFixed(3)}</td>
+      <td class="r"><span class="sc tot" style="color:${STC[x.grade]}">${x.scores.combined.toFixed(3)}</span></td>
+      <td class="r num muted">${x.quality.sharpness.toFixed(4)}</td>
+      <td class="r num muted">${x.quality.pad_size_px.toFixed(0)}px</td>
+      <td class="r num muted">${(x.quality.pad_size_diff_ratio * 100).toFixed(1)}%</td>
+      <td class="r num muted">${ex.toLocaleString()}</td>
+      <td class="muted num">${x.target_id || '—'}</td></tr>`;
+  }).join('');
+
+  drawTrend();
+}
+
+const TREND_DESC = {
+  abs: '기준 사진 대비 지금까지 쌓인 총량이다. 패드가 완전히 오염되어 더 못 재는 상태를 이 값으로 잡는다.',
+  delta: '직전 회차 대비 증분이다. 갑자기 크게 늘면 급성 오염이다. 점선은 이 개소 자기 이력에서 낸 이상 경계다.',
+  cusum: '증분에서 여유를 뺀 값을 계속 더한 것이다. 회차마다 조금씩 늘어 개별 회차로는 안 잡히는 만성 침착을, 같은 방향으로 계속 벌어지는 것으로 잡는다.',
+};
+
+function drawTrend() {
+  const host = document.getElementById('trend');
+  if (typeof Chart === 'undefined') {
+    host.parentElement.innerHTML =
+      '<div class="muted" style="padding:40px 0;text-align:center">차트 라이브러리를 불러오지 못했다 (오프라인)</div>';
+    return;
+  }
+  const p = D.points.find(x => x.id === curId);
+  const rs = p.readings;
+  const labels = rs.map(r => `${r.seq}회차`);
+  const tick = { color: '#8B857D', font: { family: 'Pretendard', size: 11 } };
+  const opts = {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { intersect: false, mode: 'index' },
+    plugins: {
+      legend: { labels: { color: '#57534E', boxWidth: 16, font: { family: 'Pretendard', size: 12, weight: '600' } } },
+      tooltip: { backgroundColor: '#FFF', borderColor: '#E7E3DD', borderWidth: 1, titleColor: '#1C1917',
+        bodyColor: '#57534E', padding: 11, titleFont: { family: 'Pretendard', weight: '700' },
+        bodyFont: { family: 'Pretendard' } },
+    },
+    scales: { y: { beginAtZero: true, grid: { color: '#EEEAE3' }, ticks: tick },
+              x: { grid: { display: false }, ticks: tick } },
+  };
+  if (chart) chart.destroy();
+
+  let datasets;
+  if (trendMode === 'abs') {
+    const get = k => rs.map(r => (r.success ? +r.scores[k].toFixed(4) : null));
+    datasets = [
+      { label: '종합', data: get('combined'), borderColor: '#F86517', backgroundColor: 'rgba(248,101,23,.10)',
+        fill: true, tension: .3, borderWidth: 2.4, pointRadius: 3 },
+      { label: '고름', data: get('uniform'), borderColor: '#A8A29B', borderWidth: 1.4, pointRadius: 2, fill: false, tension: .3 },
+      { label: '국소', data: get('localized'), borderColor: '#60A5FA', borderWidth: 1.4, pointRadius: 2,
+        fill: false, tension: .3, borderDash: [4, 3] },
+      { label: `주의 ${P.t1.toFixed(2)}`, data: labels.map(() => P.t1), borderColor: '#F59E0B',
+        borderWidth: 1.2, borderDash: [6, 4], pointRadius: 0 },
+      { label: `경고 ${P.t2.toFixed(2)}`, data: labels.map(() => P.t2), borderColor: '#EF4444',
+        borderWidth: 1.2, borderDash: [6, 4], pointRadius: 0 },
+    ];
+    chart = new Chart(host, { type: 'line', data: { labels, datasets }, options: opts });
+  } else if (trendMode === 'delta') {
+    chart = new Chart(host, {
+      type: 'bar',
+      data: { labels, datasets: [
+        { label: '직전 대비 증분', data: rs.map(r => (r.delta == null ? null : +r.delta.toFixed(4))),
+          backgroundColor: rs.map(r => (r.deltaAlert ? '#EF4444' : '#F86517')), borderRadius: 4, barPercentage: .55 },
+        { type: 'line', label: `이상 경계 ${p.deltaLimit.toFixed(3)}`, data: labels.map(() => +p.deltaLimit.toFixed(4)),
+          borderColor: '#EF4444', borderWidth: 1.2, borderDash: [6, 4], pointRadius: 0 },
+      ] }, options: opts });
+  } else {
+    chart = new Chart(host, {
+      type: 'line',
+      data: { labels, datasets: [
+        { label: `누적 (여유 ${P.slack.toFixed(3)})`, data: rs.map(r => +r.cusum.toFixed(4)),
+          borderColor: '#C2360C', backgroundColor: 'rgba(194,54,12,.10)', fill: true,
+          tension: .2, borderWidth: 2.4, pointRadius: 3, stepped: false },
+      ] }, options: opts });
+  }
+  document.getElementById('trendDesc').textContent = TREND_DESC[trendMode];
+}
+
+document.querySelectorAll('#trendSeg button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#trendSeg button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); trendMode = b.dataset.mode; drawTrend();
+});
+
+/* ------------------------------------------------------------------ */
+/* 설정                                                                */
+/* ------------------------------------------------------------------ */
+const CFG_LABELS = {
+  'spec': ['패드 규격', '도안의 좌표 규격 이름. legacy 가 assets/ 의 실제 도안이다'],
+  'pad_size_px': ['정합 출력 크기', '정면 보정 결과 한 변의 픽셀 수. 모든 영역 좌표가 여기에 비례한다'],
+  'pad_size_mm': ['실제 치수', '채우면 mm 환산이 붙는다'],
+  'detect.threshold_scales': ['이진화 임계 사다리', '앞의 값으로 패드를 못 찾으면 임계를 인쇄색 쪽으로 넓혀 다시 본다'],
+  'detect.min_pad_area_ratio': ['최소 패드 면적비', '화면에서 이보다 작게 찍힌 사각형은 패드 후보로 보지 않는다'],
+  'detect.min_solidity': ['최소 채움도', '테두리가 끊겨 모양이 무너진 후보를 거른다'],
+  'quality.max_edge_rise_ratio': ['선명도 한계', '테두리 에지가 패드 폭의 몇 %를 차지하는가. 넘으면 판독 불가'],
+  'quality.min_pad_size_px': ['최소 패드 크기', '너무 작게 찍히면 판독 불가'],
+  'quality.max_pad_size_diff_ratio': ['패드 크기 차이 한계', '기준 사진과 크기가 이보다 다르면 촬영 위치가 바뀐 것이라 비교가 성립하지 않는다'],
+  'quality.saturation_bright_level': ['밝은 포화 화소값', '이 값 이상은 정반사로 보고 측정에서 뺀다'],
+  'quality.saturation_dark_level': ['어두운 포화 화소값', '이 값 이하는 측정에서 뺀다'],
+  'normalize.gradient_correction': ['조명 기울기 보정', '테두리를 따라 밝기가 변하면 그만큼 되돌린다'],
+  'normalize.ring_samples': ['테두리 표본 수', '조명 평면을 맞출 때 링에서 뽑는 점의 개수'],
+  'dust.local_window': ['국소 배경 창', '패드 한 변 대비 비율. 이 창보다 큰 덩어리는 배경으로 흡수된다'],
+  'dust.depth_threshold': ['국소 분진 임계', '주변보다 이만큼 어두우면 분진으로 본다. 테두리를 1 로 놓은 척도'],
+  'dust.min_blob_px': ['최소 덩어리 크기', '이보다 작으면 노이즈로 버린다'],
+  'dust.clean_percentile': ['깨끗한 톤 분위수', '여백의 어느 분위수를 깨끗한 상태로 볼지. 고름 축의 기준이 된다'],
+  'score.uniform_reference': ['고름 1.0 기준값', '비어 있으면 원값을 그대로 0-1 로 자른다'],
+  'score.localized_reference': ['국소 1.0 기준값', '덩어리의 면적 비율 × 짙기'],
+  'visualize.heat_max': ['분포 이미지 빨강 기준', '이 값에서 빨강이 된다. 고정이라 두 장을 색으로 견줄 수 있다'],
+  'target_id.font_dir': ['ID 판독 폰트 폴더', '실제 인쇄에 쓴 폰트를 넣으면 그것으로 숫자 템플릿을 그린다'],
+};
+
+function cfgValue(v) {
+  if (v === null || v === undefined) return '<span class="off">미적용</span>';
+  if (typeof v === 'boolean') return v ? '켬' : '끔';
+  if (Array.isArray(v)) return v.join(' → ');
+  return String(v);
+}
+function renderConfig() {
+  const c = D.config || {};
+  const rows = Object.entries(CFG_LABELS).map(([path, [label, desc]]) => {
+    const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), c);
+    if (v === undefined) return '';
+    return `<tr><td class="k">${label}</td><td class="v">${cfgValue(v)}</td><td class="d">${desc}</td></tr>`;
+  }).join('');
+  document.getElementById('cfgBody').innerHTML = rows ||
+    `<tr><td class="d" colspan="3">설정을 읽지 못했다</td></tr>`;
+}
+
+function paintGrade() {
+  document.getElementById('gradeBar').innerHTML =
+    `<div style="flex:${P.t1};background:var(--ok)">정상</div>
+     <div style="flex:${Math.max(P.t2 - P.t1, .01)};background:var(--warn)">주의</div>
+     <div style="flex:${Math.max(1 - P.t2, .01)};background:var(--err)">경고</div>`;
+}
+
+function bindParam(inputId, outId, key, digits) {
+  const el = document.getElementById(inputId), out = document.getElementById(outId);
+  const apply = () => {
+    P[key] = parseFloat(el.value);
+    out.textContent = P[key].toFixed(digits);
+    // 경계가 뒤집히면 등급이 뒤죽박죽이 된다.
+    if (key === 't1' && P.t1 >= P.t2) { P.t2 = Math.min(1, P.t1 + 0.01);
+      document.getElementById('t2').value = P.t2; document.getElementById('t2o').textContent = P.t2.toFixed(2); }
+    if (key === 't2' && P.t2 <= P.t1) { P.t1 = Math.max(0, P.t2 - 0.01);
+      document.getElementById('t1').value = P.t1; document.getElementById('t1o').textContent = P.t1.toFixed(2); }
+    refresh();
+  };
+  el.oninput = apply;
+  apply();
+}
+
+/* ------------------------------------------------------------------ */
+/* 화면 전환과 기동                                                     */
+/* ------------------------------------------------------------------ */
+const VIEWS = ['dash', 'detail', 'history', 'settings'];
+
+function go(v) {
+  if (!VIEWS.includes(v)) v = 'dash';
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('on', s.id === v));
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.view === v));
+  document.querySelector('.main').scrollTop = 0;
+  // 주소에 남겨 두면 새로 고쳐도 보던 화면으로 돌아온다.
+  if (location.hash.slice(1) !== v) location.hash = v;
+  if (v === 'detail' && chart) setTimeout(() => chart.resize(), 40);
+}
+document.querySelectorAll('.nav a').forEach(a => a.onclick = () => go(a.dataset.view));
+window.addEventListener('hashchange', () => go(location.hash.slice(1)));
+
+function refresh() {
+  derive();
+  paintGrade();
+  renderDash();
+  renderHistory();
+  renderPtList();
+  selectPoint(curId, curSeq);
+}
+
+document.getElementById('srcLabel').textContent = `${D.points.length}개소 표본`;
+document.getElementById('footSrc').textContent = `표본 ${D.source}`;
+
+bindParam('t1', 't1o', 't1', 2);
+bindParam('t2', 't2o', 't2', 2);
+bindParam('kmad', 'kmado', 'kmad', 1);
+bindParam('slack', 'slacko', 'slack', 3);
+renderConfig();
+refresh();
+
+function tick() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  document.getElementById('clock').textContent =
+    `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+tick(); setInterval(tick, 1000);
+
+if (location.hash) go(location.hash.slice(1));
+</script>
+</body>
+</html>
