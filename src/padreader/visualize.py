@@ -1,8 +1,13 @@
-"""판독 과정 시각화.
+"""오염도 분포 시각화.
 
-무엇을 어디서 쟀는지 눈으로 확인할 수 있어야 임계값을 조정할 수 있다.
-구획 색은 오염도를 그대로 표현하고, 배제된 구획은 사유별로 다르게 표시해
-'왜 빠졌는지'가 이미지만으로 읽히게 한다.
+기준 대비 어디가 얼마나 오염되었는지를 눈으로 확인한다.
+
+    파랑-빨강   기준 대비 밝기가 얼마나 내려갔는지
+    초록 사각형 측정 영역
+
+국소 축은 그리지 않는다. 실제 분진은 밀가루처럼 고와서 낱알이 수백~수천
+개로 흩어지는데, 덩어리마다 표시를 하면 화면이 통째로 덮여 정작 어디가
+심한지가 안 보인다. 뭉친 자리는 히트맵에서 짙은 색으로 이미 드러난다.
 """
 
 from __future__ import annotations
@@ -10,133 +15,100 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .cells import CellGrid
-from .result import ExclusionReason
+from .result import DustScores
 from .spec import PadSpec
 
-EXCLUSION_COLORS: dict[ExclusionReason, tuple[int, int, int]] = {
-    ExclusionReason.MASKED: (128, 128, 128),
-    ExclusionReason.CHROMA: (255, 128, 0),
-    ExclusionReason.SATURATED: (0, 200, 255),
-}
-
-ROI_COLOR = (0, 220, 0)
-ANCHOR_WHITE_COLOR = (255, 255, 255)
-ANCHOR_BLACK_COLOR = (60, 60, 60)
+MARGIN_COLOR = (0, 220, 0)
+EXCLUDED_DIM = 0.45
 
 MIN_HEAT_SPAN = 0.05
-"""히트맵 색 범위의 최소 폭.
+"""히트맵 색 범위의 최소 폭. 색 범위를 고정하지 않을 때만 쓴다.
 
-구획 값을 최소~최대로 늘려 칠하면, 균일하게 침착된 패드에서 편차가 0.001
-밖에 안 되는데도 노이즈가 색상환 전체로 펼쳐져 강한 기울기처럼 보인다.
-실제로 균일한 것은 균일하게 보여야 한다.
+실제 편차가 좁은데 최소-최대로 늘려 칠하면 노이즈가 색상환 전체로 펼쳐져
+깨끗한 패드가 심하게 얼룩진 것처럼 보인다.
 """
 
 
-def _heat(value: float, low: float, high: float) -> tuple[int, int, int]:
-    """오염도를 파랑(낮음)-빨강(높음) 으로."""
-    span = max(high - low, 1e-6)
-    t = float(np.clip((value - low) / span, 0.0, 1.0))
-    color = cv2.applyColorMap(np.array([[int(t * 255)]], np.uint8), cv2.COLORMAP_JET)
-    b, g, r = color[0, 0].tolist()
-    return int(b), int(g), int(r)
+def _caption(image: np.ndarray, lines: list[str]) -> None:
+    """이미지 하단에 읽을 수 있는 줄을 얹는다."""
+    scale = max(0.4, image.shape[1] / 1600.0)
+    thickness = max(1, int(round(scale * 2)))
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    sizes = [cv2.getTextSize(text, font, scale, thickness)[0] for text in lines]
+    height = max(size[1] for size in sizes) + 8
+    width = max(size[0] for size in sizes)
+
+    top = image.shape[0] - height * len(lines) - 8
+    cv2.rectangle(
+        image, (4, top - 6), (width + 16, image.shape[0] - 4), (0, 0, 0), cv2.FILLED
+    )
+    for index, text in enumerate(lines):
+        cv2.putText(
+            image, text, (10, top + height * (index + 1) - 6), font, scale,
+            (255, 255, 255), thickness, cv2.LINE_AA,
+        )
 
 
-def _rect(image: np.ndarray, rect, pad_size_px: int, color, thickness: int = 2) -> None:
-    x0, y0, x1, y1 = rect.to_pixels(pad_size_px)
-    cv2.rectangle(image, (x0, y0), (x1 - 1, y1 - 1), color, thickness)
-
-
-def draw_overlay(
+def draw_distribution(
     rectified_bgr: np.ndarray,
-    grid: CellGrid,
+    uniform_diff: np.ndarray,
+    measurable: np.ndarray,
+    origin: tuple[int, int],
+    scores: DustScores,
     spec: PadSpec,
     pad_size_px: int,
+    heat_max: float | None,
 ) -> np.ndarray:
-    """구획 분할과 측정 결과를 겹쳐 그린 이미지."""
+    """기준 대비 오염도 분포 이미지.
+
+    ``heat_max`` 는 빨강이 가리킬 값이다. 고정해 두면 두 장을 색으로 바로
+    견줄 수 있다. ``None`` 이면 사진마다 그 안의 최댓값까지 늘려 칠한다.
+    """
     canvas = rectified_bgr.copy()
     if canvas.ndim == 2:
         canvas = cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
 
-    measured = [c.value for c in grid.measured if c.value is not None]
-    if measured:
-        low, high = min(measured), max(measured)
-        # 실제 폭이 좁으면 가운데를 기준으로 최소 폭까지 벌린다.
-        if high - low < MIN_HEAT_SPAN:
-            middle = (low + high) / 2.0
-            low, high = middle - MIN_HEAT_SPAN / 2.0, middle + MIN_HEAT_SPAN / 2.0
+    ox, oy = origin
+    height, width = uniform_diff.shape
+    region = canvas[oy : oy + height, ox : ox + width]
+
+    values = uniform_diff[measurable]
+    observed = float(values.max()) if values.size else 0.0
+
+    if heat_max is not None and heat_max > 0:
+        high = float(heat_max)
     else:
-        low, high = 0.0, 1.0
+        # 고정하지 않을 때. 편차가 좁으면 최소 폭까지만 벌린다.
+        high = max(observed, MIN_HEAT_SPAN)
 
-    fill = canvas.copy()
-    for cell, (x0, y0, x1, y1) in zip(grid.cells, grid.bounds):
-        if cell.excluded is not None:
-            color = EXCLUSION_COLORS.get(cell.excluded, (0, 0, 255))
-        elif cell.value is None:
-            color = (0, 0, 0)
-        else:
-            color = _heat(cell.value, low, high)
-        cv2.rectangle(fill, (x0, y0), (x1 - 1, y1 - 1), color, cv2.FILLED)
+    scaled = np.clip(uniform_diff / high, 0.0, 1.0)
+    heat = cv2.applyColorMap((scaled * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    blended = cv2.addWeighted(heat, 0.55, region, 0.45, 0)
+    region[:] = np.where(measurable[..., None], blended, region)
 
-    cv2.addWeighted(fill, 0.45, canvas, 0.55, 0, canvas)
+    # 제외된 자리는 눌러서 측정에서 빠졌음을 보인다.
+    excluded = ~measurable
+    if excluded.any():
+        region[excluded] = (region[excluded] * EXCLUDED_DIM).astype(np.uint8)
 
-    for _, (x0, y0, x1, y1) in zip(grid.cells, grid.bounds):
-        cv2.rectangle(canvas, (x0, y0), (x1 - 1, y1 - 1), (255, 255, 255), 1)
+    mx0, my0, mx1, my1 = spec.margin.to_pixels(pad_size_px)
+    cv2.rectangle(canvas, (mx0, my0), (mx1 - 1, my1 - 1), MARGIN_COLOR, 2)
 
-    # 측정 여백과 조도 기준 영역이 어디인지 표시한다.
-    _rect(canvas, spec.margin, pad_size_px, ROI_COLOR, 2)
-    for rect in spec.border_ring_rects():
-        _rect(canvas, rect, pad_size_px, ROI_COLOR, 1)
-    for rect in spec.anchor_white:
-        _rect(canvas, rect, pad_size_px, ANCHOR_WHITE_COLOR, 2)
-    for rect in spec.anchor_black:
-        _rect(canvas, rect, pad_size_px, ANCHOR_BLACK_COLOR, 2)
+    # 색 범위를 고정했으면 그 사실과 실제 최댓값을 같이 적는다. 잘린 화소가
+    # 있는지 눈으로는 알 수 없기 때문이다.
+    fixed = heat_max is not None and heat_max > 0
+    heat_line = f"heat 0..{high:.2f}"
+    heat_line += f" fixed (max {observed:.2f})" if fixed else " auto"
 
-    # 비어 있어야 할 모서리를 표시해 회전이 맞았는지 한눈에 보이게 한다.
-    _rect(canvas, spec.corner_blocks[spec.empty_corner], pad_size_px, (0, 0, 255), 2)
-
-    # 색이 무엇을 뜻하는지 적어 둔다. 이게 없으면 색만 보고 오염 정도를
-    # 짐작하게 되는데, 범위가 이미지마다 달라 서로 다른 패드를 비교할 수 없다.
-    if measured:
-        label = (
-            f"cell {min(measured):.4f}..{max(measured):.4f}"
-            f"  color {low:.3f}..{high:.3f}"
-        )
-        _caption(canvas, label)
-
-    return canvas
-
-
-def _caption(image: np.ndarray, text: str) -> None:
-    """이미지 하단에 읽을 수 있는 한 줄을 얹는다."""
-    scale = max(0.4, image.shape[1] / 1600.0)
-    thickness = max(1, int(round(scale * 2)))
-    (width, height), _ = cv2.getTextSize(
-        text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness
+    _caption(
+        canvas,
+        [
+            f"uniform {scores.uniform:.3f}  localized {scores.localized:.3f}"
+            f"  combined {scores.combined:.3f}"
+            if scores.combined is not None
+            else "score n/a",
+            heat_line,
+        ],
     )
-    x = 8
-    y = image.shape[0] - 8
-    cv2.rectangle(
-        image, (x - 4, y - height - 6), (x + width + 4, y + 6), (0, 0, 0), cv2.FILLED
-    )
-    cv2.putText(
-        image, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale,
-        (255, 255, 255), thickness, cv2.LINE_AA,
-    )
-
-
-def draw_detection(image: np.ndarray, corners: np.ndarray) -> np.ndarray:
-    """원본 위에 검출된 꼭짓점과 변을 그린다."""
-    canvas = image.copy()
-    if canvas.ndim == 2:
-        canvas = cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
-
-    points = corners.astype(np.int32)
-    cv2.polylines(canvas, [points], True, ROI_COLOR, 2)
-    for index, (x, y) in enumerate(points):
-        cv2.circle(canvas, (int(x), int(y)), 6, (0, 0, 255), -1)
-        cv2.putText(
-            canvas, str(index), (int(x) + 8, int(y) - 8),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA
-        )
     return canvas

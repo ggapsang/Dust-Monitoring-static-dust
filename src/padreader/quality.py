@@ -23,7 +23,6 @@ import numpy as np
 
 from .config import QualityConfig
 from .detect import Detection
-from .geometry import estimate_tilt_deg
 from .profile import edge_samples, rise_distances, sample_across
 from .result import FailureReason, QualityMetrics
 
@@ -86,10 +85,7 @@ def measure_quality(
     cfg: QualityConfig,
     border_thickness_ratio: float,
 ) -> QualityMetrics:
-    """원본 이미지에서 품질 지표를 산출한다.
-
-    ``anchor_contrast`` 는 정규화 단계에서만 알 수 있으므로 여기서는 비운다.
-    """
+    """원본 이미지에서 품질 지표를 산출한다."""
     corners = detection.corners
     pad_size_px = float(np.sqrt(max(detection.area, 0.0)))
 
@@ -105,8 +101,9 @@ def measure_quality(
     pad = _pad_mask(gray.shape[:2], corners)
     inside = gray[pad > 0]
     if inside.size:
-        bright = float((inside >= cfg.saturation_bright_level).mean())
-        dark = float((inside <= cfg.saturation_dark_level).mean())
+        # 임계가 비어 있어도 산출값은 낸다. 실증에서 분포를 봐야 값을 정한다.
+        bright = float((inside >= (cfg.saturation_bright_level or 255)).mean())
+        dark = float((inside <= (cfg.saturation_dark_level or 0)).mean())
     else:
         bright = dark = None
 
@@ -115,7 +112,6 @@ def measure_quality(
         tenengrad=tenengrad,
         saturated_bright_ratio=bright,
         saturated_dark_ratio=dark,
-        tilt_deg=estimate_tilt_deg(corners),
         pad_size_px=pad_size_px,
     )
 
@@ -135,12 +131,8 @@ def check_gates(metrics: QualityMetrics, cfg: QualityConfig) -> tuple[FailureRea
          FailureReason.QUALITY_SATURATION, "밝은 쪽 포화율"),
         (metrics.saturated_dark_ratio, cfg.max_saturated_dark_ratio, True,
          FailureReason.QUALITY_SATURATION, "어두운 쪽 포화율"),
-        (metrics.tilt_deg, cfg.max_tilt_deg, True,
-         FailureReason.QUALITY_ANGLE, "추정 촬영 각도"),
         (metrics.pad_size_px, cfg.min_pad_size_px, False,
          FailureReason.QUALITY_PAD_SIZE, "패드 픽셀 크기"),
-        (metrics.anchor_contrast, cfg.min_anchor_contrast, False,
-         FailureReason.QUALITY_ANCHOR_CONTRAST, "앵커 대비"),
     ]
 
     for value, limit, is_max, reason, label in checks:

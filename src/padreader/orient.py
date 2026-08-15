@@ -62,11 +62,14 @@ def determine_orientation(
     rectified_gray
         꼭짓점을 **아직 회전 보정하지 않은** 순서로 정면 보정한 흑백 이미지.
     """
+    # 중앙값이 아니라 평균으로 잰다. 인쇄물이 자리의 절반을 넘게 덮으면
+    # 중앙값은 통째로 잉크가 되어, 비어 있는 자리와 채워진 자리가 똑같은
+    # 값으로 나온다. 평균은 덮인 비율을 그대로 반영해 둘을 갈라 준다.
     inkness: dict[str, float] = {}
     for name, rect in spec.corner_blocks.items():
         inset = rect.width * CORNER_ROI_INSET
         patch = crop(rectified_gray, rect.inset(inset), pad_size_px)
-        inkness[name] = float(np.median(_inkness(patch.astype(np.float64), tone)))
+        inkness[name] = float(np.mean(_inkness(patch.astype(np.float64), tone)))
 
     # 전체 대비: 테두리(순수 잉크)와 여백의 가장 깨끗한 쪽(바탕에 가장 가까운
     # 곳) 사이. 여백은 분진이 앉아 잉크 쪽으로 끌려가므로 하위 분위수를 쓴다.

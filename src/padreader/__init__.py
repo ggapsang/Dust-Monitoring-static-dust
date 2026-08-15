@@ -10,26 +10,27 @@
 학습 요소를 쓰지 않는다. 전 경로가 기하와 통계 연산이라 판독 근거가
 설명 가능하다.
 
-스코어는 **기준 사진 대비 차이**다. 패드 부착 직후 깨끗할 때 찍은 사진과
-이후 순회 때 찍은 사진을 같은 처리로 돌린 뒤 칸별로 뺀다. 두 사진은 같은
-관측 포인트에서 같은 카메라로 찍은 것을 전제한다.
+도안에서 인쇄물의 위치를 알고 있으므로 그 바깥의 여백만 본다. 여백에서
+**주변보다 어두운 것**을 분진으로 판정하므로 기준 사진이 필요 없다.
+
+스코어는 두 축으로 낸다. 고르게 오염된 정도와 한 군데가 심하게 오염된
+정도는 원인도 대응도 다르기 때문이다.
 
 이 모듈은 상태를 갖지 않는다. 시계열 추세, 교체 판정, 알람은 이 모듈을
 호출하는 상위 계층이 맡는다.
 
     >>> from padreader import read_pad
-    >>> result = read_pad("patrol.jpg", "clean.jpg", pad_tone="white")
-    >>> result.dust_score
+    >>> result = read_pad("pad.jpg", pad_tone="white")
+    >>> result.scores.combined
 """
 
 from .config import Config, load_config
 from .pipeline import read_pad
 from .result import (
-    Cell,
-    Dispersion,
+    Blob,
+    DustScores,
     ExclusionReason,
     FailureReason,
-    LineContrast,
     NormalizationInfo,
     PadReadResult,
     QualityMetrics,
@@ -38,13 +39,12 @@ from .result import (
 from .spec import LEGACY, V2, PadSpec, get_spec
 
 __all__ = [
-    "Cell",
+    "Blob",
     "Config",
-    "Dispersion",
+    "DustScores",
     "ExclusionReason",
     "FailureReason",
     "LEGACY",
-    "LineContrast",
     "NormalizationInfo",
     "PadReadResult",
     "PadSpec",

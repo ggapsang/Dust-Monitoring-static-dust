@@ -7,8 +7,10 @@
 판독 실패는 판독 불가로 올리지 않는다. 패드 자체는 읽혔고 분진 스코어는
 그대로 유효하기 때문이다. 실패는 상태로 표시해 상위 계층이 판단하게 한다.
 
-전제: 인쇄에 쓴 폰트와 판독에 쓰는 폰트가 같아야 한다. 설정의
-``target_id.font_path`` 를 도안 생성 때와 같은 값으로 두면 자동으로 맞는다.
+전제: 인쇄에 쓴 폰트와 판독에 쓰는 폰트가 같아야 한다. ``target_id.font_dir``
+폴더에 실제 인쇄에 쓴 폰트를 넣어 두면 그것으로 템플릿을 그린다. 폴더가
+비어 있으면 내장 스트로크 폰트로 도는데, 인쇄체와 모양이 다르면 자리를
+잘못 읽을 수 있다.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import cv2
 import numpy as np
 
 from .config import TargetIdConfig
-from .glyphs import digit_templates
+from .glyphs import digit_templates, find_font
 from .rectify import crop
 from .result import TargetIdStatus
 from .spec import PadSpec
@@ -110,8 +112,10 @@ def read_target_id(
     if cfg.digits is not None and len(boxes) != cfg.digits:
         return None, TargetIdStatus.FAILED, None
 
+    font_path = find_font(cfg.font_dir)
     templates = {
-        digit: _fit(glyph) for digit, glyph in digit_templates(TEMPLATE_HEIGHT).items()
+        digit: _fit(glyph)
+        for digit, glyph in digit_templates(TEMPLATE_HEIGHT, font_path).items()
     }
 
     digits: list[str] = []
@@ -128,6 +132,4 @@ def read_target_id(
     # 신뢰도는 가장 약한 자리를 따른다. 한 자리만 틀려도 ID 전체가 틀리므로
     # 평균으로 뭉개면 안 된다.
     confidence = float(min(scores))
-    if confidence < cfg.min_confidence:
-        return "".join(digits), TargetIdStatus.FAILED, confidence
     return "".join(digits), TargetIdStatus.OK, confidence

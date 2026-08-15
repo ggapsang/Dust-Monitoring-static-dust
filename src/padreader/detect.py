@@ -14,6 +14,14 @@
    전제가 성립하지 않는다. 대신 네 변마다 수백 개의 에지 교차점을 서브픽셀로
    찾아 직선을 맞추고, 인접 직선의 교점을 꼭짓점으로 삼는다. 표본이 많아
    개별 노이즈가 평균화되고, 꼭짓점이 실제로 뭉개져 있어도 무관하다.
+
+3. **이진화 임계를 한 번만 시도하지 않는다.** 화면에서 패드가 차지하는
+   비중이 작으면 오츠 임계는 패드가 아니라 배경과 바탕면 사이에 잡힌다.
+   테두리 잉크는 순흑이 아니라 회색이므로 그 임계 바로 아래에 놓이고,
+   패드가 조금 밝게 찍히면 테두리 일부가 임계를 넘어 링에 구멍이 뚫린다.
+   링이 끊기면 바깥 윤곽이 사각형이 아니라 띠를 훑는 모양이 되어 검출이
+   통째로 실패한다. 그래서 후보를 못 찾으면 임계를 인쇄색 쪽으로 넓혀
+   다시 시도한다.
 """
 
 from __future__ import annotations
@@ -52,18 +60,44 @@ class Detection:
     """변별 직선 적합 잔차 RMS(px). 크면 테두리가 가려졌거나 곡면에 붙어 있다."""
 
 
-def _binarize(gray: np.ndarray, tone: str, cfg: DetectConfig) -> np.ndarray:
+def _prepare(gray: np.ndarray, cfg: DetectConfig) -> np.ndarray:
+    """이진화에 쓸 흐린 이미지. 분진 측정은 원본으로 하므로 여기서만 쓴다."""
+    if cfg.blur_ksize and cfg.blur_ksize >= 3:
+        k = cfg.blur_ksize | 1
+        return cv2.GaussianBlur(gray, (k, k), 0)
+    return gray
+
+
+def _otsu_level(work: np.ndarray, tone: str) -> float:
+    """오츠 임계값."""
+    flag = cv2.THRESH_BINARY_INV if tone == "white" else cv2.THRESH_BINARY
+    level, _ = cv2.threshold(work, 0, 255, flag | cv2.THRESH_OTSU)
+    return float(level)
+
+
+def _binarize(
+    gray: np.ndarray, tone: str, cfg: DetectConfig, scale: float = 1.0
+) -> np.ndarray:
     """인쇄색을 255 로 하는 이진 이미지.
 
     패드 톤에 따라 극성을 뒤집어 이후 로직을 하나로 통일한다.
-    """
-    work = gray
-    if cfg.blur_ksize and cfg.blur_ksize >= 3:
-        k = cfg.blur_ksize | 1
-        work = cv2.GaussianBlur(gray, (k, k), 0)
 
+    ``scale`` 은 오츠 임계를 인쇄색 쪽으로 얼마나 넓힐지다. 1.0 이 오츠
+    그대로이고, 키우면 더 옅은 잉크까지 인쇄색으로 친다. 백색 바탕은 잉크가
+    어두우므로 임계를 올리고, 흑색 바탕은 잉크가 밝으므로 같은 비율만큼
+    내린다.
+    """
+    work = _prepare(gray, cfg)
     flag = cv2.THRESH_BINARY_INV if tone == "white" else cv2.THRESH_BINARY
-    _, binary = cv2.threshold(work, 0, 255, flag | cv2.THRESH_OTSU)
+
+    if scale == 1.0:
+        _, binary = cv2.threshold(work, 0, 255, flag | cv2.THRESH_OTSU)
+        return binary
+
+    otsu = _otsu_level(work, tone)
+    factor = scale if tone == "white" else 2.0 - scale
+    level = float(np.clip(otsu * factor, 1.0, 254.0))
+    _, binary = cv2.threshold(work, level, 255, flag)
     return binary
 
 
@@ -159,8 +193,25 @@ def _refine_edge(
 def detect_pad(
     gray: np.ndarray, tone: str, cfg: DetectConfig
 ) -> Detection | None:
-    """패드를 찾아 서브픽셀 꼭짓점을 반환한다. 못 찾으면 ``None``."""
-    binary = _binarize(gray, tone, cfg)
+    """패드를 찾아 서브픽셀 꼭짓점을 반환한다. 못 찾으면 ``None``.
+
+    임계를 여러 번 시도한다. 처음 값이 오츠 그대로이고, 후보를 못 찾으면
+    인쇄색 쪽으로 넓혀 다시 본다. 꼭짓점은 어느 임계로 찾았든 원본 밝기
+    단면에서 다시 맞추므로 정밀도가 임계에 좌우되지 않는다.
+    """
+    scales = cfg.threshold_scales or [1.0]
+    for scale in scales:
+        found = _detect_at(gray, tone, cfg, scale)
+        if found is not None:
+            return found
+    return None
+
+
+def _detect_at(
+    gray: np.ndarray, tone: str, cfg: DetectConfig, scale: float
+) -> Detection | None:
+    """임계 하나로 패드를 찾는다."""
+    binary = _binarize(gray, tone, cfg, scale)
 
     for quad in _candidate_quads(binary, cfg):
         center = quad.mean(axis=0)

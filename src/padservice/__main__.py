@@ -47,7 +47,10 @@ def main(argv: list[str] | None = None) -> int:
 
     source = resolve_config_path()
     print(f"설정: {source or '(파일 없음, 기본값 사용)'}", file=sys.stderr)
-    print(f"규격: {config.spec} | 격자: {config.grid.rows}x{config.grid.cols}", file=sys.stderr)
+    print(
+        f"규격: {config.spec} | 분진 임계: {config.dust.depth_threshold}",
+        file=sys.stderr,
+    )
 
     uvicorn.run(
         "padservice.app:app",

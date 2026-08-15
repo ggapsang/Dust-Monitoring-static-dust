@@ -11,6 +11,9 @@ dependencies = [
     "numpy>=1.24",
     "opencv-python>=4.8",
     "PyYAML>=6.0",
+    # TARGET_ID 판독의 숫자 템플릿을 실제 인쇄 폰트로 그리는 데 쓴다.
+    # 없으면 내장 스트로크 폰트밖에 못 써서 판독이 틀린다.
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]

@@ -1,101 +1,127 @@
-"""분진 스코어 산출.
+"""기준 대비 비교와 스코어 산출.
 
-구획별 반사율을 오염도로 뒤집고, 패드 전체를 대표하는 값 하나와 산포를 낸다.
+판독 이미지의 분진에서 기준 이미지의 분진을 뺀다. 그 차이가 패드를 부착한
+이후 쌓인 분진이다. 인쇄 농도, 패드 재질, 카메라 개체차, 조명 배치는 두
+사진에 똑같이 들어 있으므로 빼는 순간 사라진다.
 
-**대표값에 평균을 쓰지 않는다.** 국소 뭉침은 소수 구획만 크게 변하는데
-평균을 쓰면 나머지 구획에 희석되어 사라진다. 상위 분위수나 최댓값을 쓴다.
+두 축을 각각 낸다. 같은 양이 쌓여도 넓고 고르게 깔린 것과 한 곳에 뭉친
+것은 원인도 대응도 다르기 때문이다.
 
-**산포를 두 가지 낸다.** 균일 침착과 국소 뭉침을 구분하려면 하나로는
-부족하다. 전체가 고르게 어두워지면 IQR 은 거의 안 움직이지만, 몇 구획만
-튀면 ``p90 - p50`` 이 뚜렷하게 벌어진다. 반대로 침착량 자체가 늘면 두 값이
-같이 움직인다.
+    고름   = 패드 전체 밝기 변화의 평균
+    국소   = 덩어리들 중 가장 크고 짙은 것
 
-기준 이미지를 갖지 않으므로 청정 상태 대비 변화량은 계산하지 않는다.
-여기서 나오는 것은 절대 측정값이고, 비교는 상위 계층 몫이다.
+종합 지표는 ``u + l - u*l`` 이다. 한쪽만 높아도 종합이 그 값 이상이고, 둘 다
+높으면 각각보다 높으며, 한 축이 1 이면 종합도 1 이다. 조정 파라미터는 두지
+않는다.
 """
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
-from .config import ScoreConfig
-from .result import Cell, Dispersion
+from .config import DustConfig, ScoreConfig
+from .dust import DustMap
+from .result import Blob, DustScores
 
 
-def soiling(reflectance: float, tone: str) -> float:
-    """반사율을 오염도로. 클수록 오염이 심하다.
+def difference(reading: np.ndarray, baseline: np.ndarray) -> np.ndarray:
+    """판독에서 기준을 뺀다. 기준보다 깨끗해진 곳은 0 으로 둔다.
 
-    반사율은 톤과 무관한 절대 척도(0 = 흡수, 1 = 반사)다. 오염 방향은
-    톤이 정한다 — 백색 바탕에는 흑색 분진이 앉아 어두워지고, 흑색 바탕에는
-    백색 분진이 앉아 밝아진다.
+    음수는 분진이 줄었다는 뜻인데, 부착 이후 쌓인 양을 재는 것이 목적이므로
+    오염량으로 세지 않는다. 노이즈가 음수 쪽으로 흔들려 값을 깎는 것도 막는다.
     """
-    return 1.0 - reflectance if tone == "white" else reflectance
+    return np.clip(reading - baseline, 0.0, 1.0).astype(np.float32)
 
 
-def apply_soiling(cells: list[Cell], tone: str) -> None:
-    """각 구획의 ``reading`` 에 그 사진의 오염도를 채운다."""
-    for cell in cells:
-        if cell.excluded is None and cell.reflectance is not None:
-            cell.reading = soiling(cell.reflectance, tone)
-
-
-def subtract_baseline(reading: list[Cell], baseline: list[Cell]) -> list[Cell]:
-    """판독 사진의 칸값에서 기준 사진의 같은 칸값을 뺀다.
-
-    이 차이가 오염량이다. 사진 한 장의 절대값은 깨끗할 때 얼마였는지를
-    모르면 해석할 수 없다 — 인쇄 농도, 패드 재질, 카메라 개체차가 모두
-    섞여 있기 때문이다. 같은 패드를 같은 카메라로 찍은 두 장을 빼면 그
-    공통분이 사라지고 그 사이에 쌓인 양만 남는다.
-
-    어느 한쪽이라도 배제된 칸은 뺄 수 없으므로 함께 배제한다. 그 칸이
-    왜 빠졌는지는 배제된 쪽의 사유를 따른다.
-    """
-    combined: list[Cell] = []
-    for read_cell, base_cell in zip(reading, baseline):
-        read_cell.baseline = base_cell.reading
-        excluded = read_cell.excluded or base_cell.excluded
-        read_cell.excluded = excluded
-        if excluded is None and read_cell.reading is not None and base_cell.reading is not None:
-            read_cell.value = read_cell.reading - base_cell.reading
-        else:
-            read_cell.value = None
-        combined.append(read_cell)
-    return combined
-
-
-def _statistic(values: np.ndarray, spec: str) -> float:
-    """설정 문자열이 가리키는 대표값.
-
-    ``max`` 또는 ``pNN`` (NN = 0-100 분위수). 평균은 의도적으로 받지 않는다.
-    """
-    if spec == "max":
-        return float(values.max())
-    if spec.startswith("p"):
-        try:
-            q = float(spec[1:])
-        except ValueError:
-            raise ValueError(f"분위수를 읽을 수 없다: {spec!r}") from None
-        if not 0.0 <= q <= 100.0:
-            raise ValueError(f"분위수는 0-100 이어야 한다: {spec!r}")
-        return float(np.percentile(values, q))
-    raise ValueError(f"알 수 없는 대표값 방식: {spec!r} ('max' 또는 'pNN')")
-
-
-def compute_score(cells: list[Cell], cfg: ScoreConfig) -> tuple[float, Dispersion] | None:
-    """대표값과 산포. 측정된 구획이 없으면 ``None``."""
-    values = np.array(
-        [c.value for c in cells if c.excluded is None and c.value is not None],
-        dtype=np.float64,
+def find_blobs(
+    depth: np.ndarray, measurable_px: int, cfg: DustConfig
+) -> tuple[list[Blob], np.ndarray]:
+    """붙어 있는 분진 픽셀을 덩어리로 묶는다. (덩어리 목록, 마스크)."""
+    mask = depth > cfg.depth_threshold
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        mask.astype(np.uint8), connectivity=8
     )
-    if values.size == 0:
-        return None
 
-    score = _statistic(values, cfg.statistic)
-    p50, p90 = np.percentile(values, [50, 90])
-    q1, q3 = np.percentile(values, [25, 75])
-    dispersion = Dispersion(
-        stdev=float(values.std(ddof=1)) if values.size > 1 else 0.0,
-        iqr=float(q3 - q1),
-        p90_minus_p50=float(p90 - p50),
+    blobs: list[Blob] = []
+    for label in range(1, count):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < cfg.min_blob_px:
+            # 노이즈 한두 화소까지 덩어리로 세면 개수가 의미를 잃는다.
+            mask[labels == label] = False
+            continue
+        pixels = depth[labels == label]
+        blobs.append(
+            Blob(
+                area_px=area,
+                area_ratio=area / max(measurable_px, 1),
+                mean_depth=float(pixels.mean()),
+                max_depth=float(pixels.max()),
+                center=(
+                    float(centroids[label][0] / max(depth.shape[1], 1)),
+                    float(centroids[label][1] / max(depth.shape[0], 1)),
+                ),
+            )
+        )
+
+    # 크고 짙은 순. 국소 스코어가 이 순서의 맨 앞을 쓴다.
+    blobs.sort(key=lambda b: b.area_ratio * b.mean_depth, reverse=True)
+    return blobs, mask
+
+
+def _normalize(raw: float, reference: float | None) -> float:
+    """원값을 0-1 로. 기준값이 없으면 원값을 그대로 자른다.
+
+    기준값은 '이 정도면 1.0 으로 볼 값' 이며 실증에서 정해야 한다. 비어
+    있는 동안에도 스코어가 나오긴 해야 하므로 원값을 그대로 쓴다.
+    """
+    if reference is None or reference <= 0:
+        return float(np.clip(raw, 0.0, 1.0))
+    return float(np.clip(raw / reference, 0.0, 1.0))
+
+
+def compute_scores(
+    reading: DustMap,
+    baseline: DustMap,
+    dust_cfg: DustConfig,
+    cfg: ScoreConfig,
+) -> tuple[DustScores, list[Blob], np.ndarray]:
+    """기준 대비 두 축의 스코어를 낸다.
+
+    Returns
+    -------
+    (스코어, 덩어리 목록, 고름 차이 맵)
+    """
+    # 두 사진 모두에서 측정 가능한 곳만 본다. 한쪽이라도 제외된 자리는
+    # 비교가 성립하지 않는다.
+    measurable = reading.measurable & baseline.measurable
+    measurable_px = int(measurable.sum())
+    if measurable_px == 0:
+        return DustScores(), [], np.zeros(reading.uniform_depth.shape, np.float32)
+
+    uniform_diff = np.where(
+        measurable, difference(reading.uniform_depth, baseline.uniform_depth), 0.0
+    ).astype(np.float32)
+    local_diff = np.where(
+        measurable, difference(reading.local_depth, baseline.local_depth), 0.0
+    ).astype(np.float32)
+
+    uniform_raw = float(uniform_diff.sum() / measurable_px)
+
+    blobs, _ = find_blobs(local_diff, measurable_px, dust_cfg)
+    # 가장 크고 짙은 덩어리 하나가 국소 오염의 크기다. 면적 비율과 짙기를
+    # 곱해 '넓게 옅은 것' 과 '좁게 짙은 것' 을 같은 저울에 올린다.
+    localized_raw = blobs[0].area_ratio * blobs[0].mean_depth if blobs else 0.0
+
+    uniform = _normalize(uniform_raw, cfg.uniform_reference)
+    localized = _normalize(localized_raw, cfg.localized_reference)
+    combined = uniform + localized - uniform * localized
+
+    scores = DustScores(
+        uniform=uniform,
+        localized=localized,
+        combined=float(combined),
+        uniform_raw=uniform_raw,
+        localized_raw=float(localized_raw),
     )
-    return score, dispersion
+    return scores, blobs, uniform_diff

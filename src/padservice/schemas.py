@@ -1,11 +1,13 @@
 """응답 스키마.
 
-판독 결과를 그대로 미러하되, **기본 응답은 짧게** 유지한다. 88개 구획과
-진단값을 한꺼번에 쏟아내면 정작 봐야 할 분진 스코어가 묻힌다.
+요구사항 정의서에 적힌 것만 담는다. 중간 계산값을 같이 뱉으면 정작 봐야 할
+스코어가 묻힌다.
 
-    기본            핵심만. 성공 여부, 스코어, 산포, ID
-    detail=true     품질 게이트와 정규화 진단값
-    include_cells   구획별 값 88개
+    성공 여부와 실패 사유
+    두 축 스코어와 종합 지표 (각각 0-1)
+    제외 사유별 픽셀 수
+    품질 게이트 산출값 네 가지
+    판독된 TARGET_ID
 
 코어 모듈이 pydantic 을 알 필요가 없도록 변환은 여기서만 한다.
 """
@@ -16,255 +18,139 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------------------
-# 요청
-# ---------------------------------------------------------------------------
-
 
 class ReadPathRequest(BaseModel):
-    """서버에 있는 이미지를 경로로 지정해 판독하는 요청.
+    """서버에 있는 사진을 경로로 지정해 판독하는 요청."""
 
-    설정을 쿼리 문자열이 아니라 본문의 객체로 받는다. 업로드 엔드포인트는
-    multipart 라 설정을 폼 필드로 받는데, 여기까지 쿼리로 두면 폼으로 보낸
-    설정이 조용히 무시되고 기본값으로 읽히는 사고가 난다. 판독 결과가
-    달라지는데 아무 오류도 나지 않는 것이 가장 나쁜 형태다.
-    """
-
-    path: str = Field(description="판독 사진 경로. 순회 때 찍은 것")
+    path: str = Field(description="판독 이미지 경로. 순회 때 찍은 사진")
     baseline_path: str = Field(
-        description="기준 사진 경로. 패드 부착 직후 깨끗할 때 찍은 것"
+        description="기준 이미지 경로. 부착 직후 같은 위치·각도로 찍은 사진"
     )
     tone: str = Field(default="white", description="white = 백색 바탕/흑색 인쇄")
-    visualize: bool = Field(default=False, description="판독 결과 이미지 주소를 함께 받을지")
-    detail: bool = Field(default=False, description="품질·정규화 진단값을 포함할지")
-    include_cells: bool = Field(default=False, description="구획별 값을 포함할지")
+    visualize: bool = Field(
+        default=True,
+        description=(
+            "판독 결과 이미지 주소를 함께 받을지. "
+            "끄면 이미지를 만들지 않아 조금 빨라진다."
+        ),
+    )
     config: dict[str, Any] | None = Field(
         default=None,
         description="설정 일부 덮어쓰기. 비워 두면 서버 설정을 그대로 쓴다.",
     )
 
     model_config = {
-        # 문서 UI 가 보여줄 기본 예시. 이게 없으면 paths 에 "string" 이 들어간
-        # 요청이 만들어져 곧바로 실패한다.
         "json_schema_extra": {
             "examples": [
                 {
-                    "path": "/data/white_cov20.png",
-                    "baseline_path": "/data/white_cov00.png",
+                    "path": "/data/patrol.png",
+                    "baseline_path": "/data/clean.png",
                     "tone": "white",
                     "visualize": True,
-                    "detail": False,
-                    "include_cells": False,
-                    "config": {"spec": "v2_protected"},
                 }
             ]
         }
     }
 
 
-# ---------------------------------------------------------------------------
-# 응답 조각
-# ---------------------------------------------------------------------------
-
-
 class ImageLinks(BaseModel):
-    """판독 결과 이미지 주소. 브라우저에 그대로 붙여 넣으면 보인다."""
+    """결과 이미지 주소. 브라우저에 그대로 붙여 넣으면 보인다."""
 
-    overlay: str = Field(description="격자·측정 영역·구획별 오염도를 겹쳐 그린 이미지")
-    rectified: str = Field(description="정면으로 펴기만 한 이미지")
+    baseline_rectified: str = Field(description="기준 이미지의 정합 사진")
+    rectified: str = Field(description="판독 이미지의 정합 사진")
+    distribution: str = Field(description="기준 대비 오염도 분포 사진")
 
 
-class DispersionModel(BaseModel):
-    """구획 값이 얼마나 흩어져 있는지."""
+class ScoresModel(BaseModel):
+    """두 축의 스코어와 종합 지표. 각각 0-1."""
 
-    stdev: float | None = None
-    iqr: float | None = None
-    p90_minus_p50: float | None = Field(
-        default=None,
-        description="국소 뭉침 지표. 몇 칸만 튀면 IQR 보다 먼저 벌어진다.",
-    )
+    uniform: float | None = Field(default=None, description="고르게 오염된 정도")
+    localized: float | None = Field(default=None, description="한 군데가 심하게 오염된 정도")
+    combined: float | None = Field(default=None, description="종합 지표")
 
 
 class QualityModel(BaseModel):
-    edge_rise_ratio: float | None = Field(
-        default=None, description="흐림 정도. 작을수록 선명하다."
+    """품질 게이트 산출값."""
+
+    sharpness: float | None = Field(default=None, description="선명도. 작을수록 선명하다")
+    saturated_ratio: float | None = Field(default=None, description="포화 픽셀 비율")
+    pad_size_px: float | None = Field(default=None, description="패드 영역 픽셀 크기")
+    pad_size_diff_ratio: float | None = Field(
+        default=None, description="기준 이미지와의 패드 크기 차이 비율"
     )
-    tenengrad: float | None = None
-    saturated_bright_ratio: float | None = None
-    saturated_dark_ratio: float | None = None
-    tilt_deg: float | None = Field(default=None, description="추정 촬영 각도")
-    pad_size_px: float | None = None
-    anchor_contrast: float | None = None
-
-
-class NormalizationModel(BaseModel):
-    method: str
-    anchor_black: float | None = None
-    anchor_white: float | None = None
-    anchor_black_mad: float | None = None
-    anchor_white_mad: float | None = None
-    plane_residual_rms: float | None = Field(
-        default=None, description="조명 추정 잔차. 크면 기울기 추정을 믿기 어렵다."
-    )
-    plane_condition_number: float | None = None
-    plane_gradient: list[float] | None = None
-
-
-class CellModel(BaseModel):
-    row: int
-    col: int
-    value: float | None = Field(default=None, description="판독 − 기준. 이 칸의 오염량")
-    reading: float | None = Field(default=None, description="판독 사진의 값")
-    baseline: float | None = Field(default=None, description="기준 사진의 값")
-    reflectance: float | None
-    chroma_norm: float | None
-    chroma_abs: float | None
-    saturated_ratio: float | None
-    valid_pixel_ratio: float
-    excluded: str | None
-
-
-class LineContrastModel(BaseModel):
-    index: int
-    thickness_px: float | None
-    contrast: float | None
-    line_level: float | None
-    gap_level: float | None
-
-
-# ---------------------------------------------------------------------------
-# 응답
-# ---------------------------------------------------------------------------
 
 
 class ReadResponse(BaseModel):
-    """이미지 한 장의 판독 결과.
+    """판독 결과.
 
-    판독 불가도 오류가 아니다. 요청 자체는 정상이었고 이미지가 기준에 못
-    미친 것이므로, 그 구분을 ``success`` 로 표현한다.
+    판독 불가도 HTTP 200 으로 돌아온다. 요청 자체는 정상이었고 사진이 기준에
+    못 미친 것이므로, 그 구분을 상태 코드가 아니라 ``success`` 로 표현한다.
     """
 
     success: bool
     summary: str = Field(description="사람이 읽는 한 줄 요약")
 
-    dust_score: float | None = Field(
-        default=None, description="기준 사진 대비 오염량. 0 이면 그때와 같고 클수록 심하다."
+    scores: ScoresModel = ScoresModel()
+    quality: QualityModel = QualityModel()
+    excluded_px: dict[str, int] = Field(
+        default={}, description="분진 판정에서 빠진 픽셀 수. 사유별"
     )
-    score_statistic: str | None = None
-    dispersion: DispersionModel = DispersionModel()
 
     target_id: str | None = None
-    target_id_status: str | None = None
-    target_id_confidence: float | None = None
-
-    images: ImageLinks | None = Field(
-        default=None, description="visualize=true 일 때만. 주소를 열면 이미지가 나온다."
-    )
 
     failure_reason: str | None = None
     failure_detail: str | None = None
 
-    pad_tone: str | None = None
-    spec_name: str | None = None
-    rotation_deg: int | None = None
-    grid_shape: list[int] | None = None
-    excluded_count: int = 0
-    excluded_by_reason: dict[str, int] = {}
+    images: ImageLinks | None = Field(
+        default=None, description="결과 이미지 주소. visualize 를 끄면 비어 있다"
+    )
     elapsed_ms: float | None = None
-
-    # detail=true 일 때만
-    quality: QualityModel | None = None
-    normalization: NormalizationModel | None = None
-    line_contrasts: list[LineContrastModel] | None = None
-    corners: list[list[float]] | None = None
-    rotation_margin: float | None = None
-
-    # include_cells=true 일 때만
-    cells: list[CellModel] | None = None
 
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
                     "success": True,
-                    "summary": "판독 성공 · 오염량 +0.197 (p90) · 산포 0.003 · 제외 0/88칸 · ID 1078 · 612ms",
-                    "dust_score": 0.197,
-                    "score_statistic": "p90",
-                    "dispersion": {
-                        "stdev": 0.0026,
-                        "iqr": 0.0042,
-                        "p90_minus_p50": 0.0033,
+                    "summary": "판독 성공 · 종합 0.307 (고름 0.036 · 국소 0.305) · 386ms",
+                    "scores": {"uniform": 0.036, "localized": 0.305, "combined": 0.307},
+                    "quality": {
+                        "sharpness": 0.0029,
+                        "saturated_ratio": 0.0,
+                        "pad_size_px": 616.1,
+                        "pad_size_diff_ratio": 0.004,
                     },
+                    "excluded_px": {"print_element": 0, "saturated": 0},
                     "target_id": "1078",
-                    "target_id_status": "ok",
-                    "target_id_confidence": 0.912,
-                    "images": {
-                        "overlay": "http://localhost:8911/images/1253f37a150c69ee/overlay.png",
-                        "rectified": "http://localhost:8911/images/1253f37a150c69ee/rectified.png",
-                    },
                     "failure_reason": None,
                     "failure_detail": None,
-                    "pad_tone": "white",
-                    "spec_name": "v2_protected",
-                    "rotation_deg": 0,
-                    "grid_shape": [8, 11],
-                    "excluded_count": 0,
-                    "excluded_by_reason": {},
-                    "elapsed_ms": 612.4,
+                    "elapsed_ms": 386.0,
                 }
             ]
         }
     }
 
 
-# ---------------------------------------------------------------------------
-# 변환
-# ---------------------------------------------------------------------------
-
 FAILURE_LABELS: dict[str, str] = {
     "pad_not_found": "패드를 찾지 못함",
     "rotation_ambiguous": "회전 방향을 확정하지 못함",
     "quality_sharpness": "선명도 미달",
     "quality_saturation": "밝기 포화 과다",
-    "quality_angle": "촬영 각도 초과",
     "quality_pad_size": "패드가 너무 작게 찍힘",
-    "quality_anchor_contrast": "조도 기준 대비 부족",
-    "no_valid_cells": "측정 가능한 구획 없음",
+    "normalization_failed": "테두리를 조명 기준으로 삼을 수 없음",
+    "no_measurable_area": "제외 후 측정할 영역이 남지 않음",
     "invalid_image": "이미지를 읽을 수 없음",
-    "baseline_unreadable": "기준 사진을 판독하지 못함",
-    "normalization_mismatch": "기준 사진과 정규화 방식이 다름",
-    "grid_mismatch": "기준 사진과 격자가 어긋남",
+    "baseline_unreadable": "기준 이미지를 판독하지 못함",
+    "pad_size_mismatch": "기준 이미지와 패드 크기가 크게 다름",
 }
 
 
-def _r(value: Any, digits: int = 4) -> Any:
-    """소수 자리를 잘라 읽을 수 있게 만든다.
-
-    ``0.19801980257034302`` 같은 자리수는 눈으로 읽을 수 없고, 그 끝자리는
-    측정 잡음보다 훨씬 작아 아무 의미도 없다. 분진 스코어의 실제 재현
-    편차가 0.001 수준이므로 소수 넷째 자리면 충분히 남는다.
-    """
+def _r(value: Any, digits: int = 3) -> Any:
+    """소수 자리를 잘라 읽을 수 있게 만든다."""
     return None if value is None else round(float(value), digits)
 
 
-def _round_map(values: dict[str, Any] | None, digits: int, **overrides: int) -> dict[str, Any]:
-    """사전의 실수 값을 자리수 맞춰 반올림한다. 항목별로 자리수를 달리 줄 수 있다."""
-    if not values:
-        return {}
-    out: dict[str, Any] = {}
-    for key, value in values.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            out[key] = value
-        else:
-            out[key] = _r(value, overrides.get(key, digits))
-    return out
-
-
 def build_summary(payload: dict[str, Any]) -> str:
-    """한 장의 결과를 한 줄로 요약한다.
-
-    실패했으면 왜 실패했는지가, 성공했으면 스코어와 산포가 먼저 보이게 한다.
-    """
+    """결과를 한 줄로. 실패했으면 왜인지가, 성공했으면 스코어가 먼저 보이게 한다."""
     elapsed = payload.get("elapsed_ms")
     tail = f" · {elapsed:.0f}ms" if elapsed is not None else ""
 
@@ -272,91 +158,45 @@ def build_summary(payload: dict[str, Any]) -> str:
         reason = payload.get("failure_reason") or "알 수 없는 사유"
         label = FAILURE_LABELS.get(reason, reason)
         detail = payload.get("failure_detail")
-        extra = f" ({detail})" if detail else ""
-        return f"판독 불가 · {label}{extra}{tail}"
+        return f"판독 불가 · {label}{f' ({detail})' if detail else ''}{tail}"
 
+    scores = payload.get("scores") or {}
     parts = ["판독 성공"]
-
-    score = payload.get("dust_score")
-    if score is not None:
-        parts.append(f"오염량 {score:+.3f} ({payload.get('score_statistic')})")
-
-    spread = (payload.get("dispersion") or {}).get("p90_minus_p50")
-    if spread is not None:
-        parts.append(f"산포 {spread:.3f}")
-
-    grid = payload.get("grid_shape")
-    total = grid[0] * grid[1] if grid else None
-    if total:
-        parts.append(f"제외 {payload.get('excluded_count', 0)}/{total}칸")
-
-    status = payload.get("target_id_status")
-    if status == "ok":
-        parts.append(f"ID {payload.get('target_id')}")
-    elif status == "failed":
-        parts.append("ID 판독 실패")
-
+    if scores.get("combined") is not None:
+        parts.append(
+            f"종합 {scores['combined']:.3f}"
+            f" (고름 {scores.get('uniform') or 0:.3f} · 국소 {scores.get('localized') or 0:.3f})"
+        )
+    if payload.get("target_id"):
+        parts.append(f"ID {payload['target_id']}")
     return " · ".join(parts) + tail
 
 
 def to_response(
-    payload: dict[str, Any],
-    *,
-    detail: bool,
-    include_cells: bool,
-    images: ImageLinks | None = None,
+    payload: dict[str, Any], *, images: ImageLinks | None = None
 ) -> ReadResponse:
-    """판독 결과 사전을 응답 모델로. 요청한 부분만 채운다."""
-    result = ReadResponse(
+    """판독 결과 사전을 응답 모델로."""
+    scores = payload.get("scores") or {}
+    quality = payload.get("quality") or {}
+
+    return ReadResponse(
         success=payload["success"],
         summary=build_summary(payload),
-        dust_score=_r(payload.get("dust_score")),
-        score_statistic=payload.get("score_statistic"),
-        dispersion=DispersionModel(**_round_map(payload.get("dispersion"), 4)),
+        scores=ScoresModel(
+            uniform=_r(scores.get("uniform")),
+            localized=_r(scores.get("localized")),
+            combined=_r(scores.get("combined")),
+        ),
+        quality=QualityModel(
+            sharpness=_r(quality.get("edge_rise_ratio"), 4),
+            saturated_ratio=_r(quality.get("saturated_bright_ratio"), 4),
+            pad_size_px=_r(quality.get("pad_size_px"), 1),
+            pad_size_diff_ratio=_r(payload.get("pad_size_diff_ratio"), 4),
+        ),
+        excluded_px=payload.get("excluded_px") or {},
         target_id=payload.get("target_id"),
-        target_id_status=payload.get("target_id_status"),
-        target_id_confidence=_r(payload.get("target_id_confidence"), 3),
-        images=images,
         failure_reason=payload.get("failure_reason"),
         failure_detail=payload.get("failure_detail"),
-        pad_tone=payload.get("pad_tone"),
-        spec_name=payload.get("spec_name"),
-        rotation_deg=payload.get("rotation_deg"),
-        grid_shape=payload.get("grid_shape"),
-        excluded_count=payload.get("excluded_count", 0),
-        excluded_by_reason=payload.get("excluded_by_reason") or {},
+        images=images,
         elapsed_ms=_r(payload.get("elapsed_ms"), 1),
     )
-
-    if detail:
-        # 밝기 카운트나 픽셀 크기는 소수점이 의미 없으므로 자리수를 줄인다.
-        result.quality = QualityModel(
-            **_round_map(payload.get("quality"), 4, tenengrad=1, pad_size_px=1, anchor_contrast=1)
-        )
-        normalization = payload.get("normalization")
-        if normalization:
-            rounded = _round_map(
-                normalization, 4,
-                anchor_black=1, anchor_white=1,
-                anchor_black_mad=1, anchor_white_mad=1,
-                plane_condition_number=2,
-            )
-            gradient = normalization.get("plane_gradient")
-            rounded["plane_gradient"] = (
-                None if gradient is None else [_r(v) for v in gradient]
-            )
-            result.normalization = NormalizationModel(**rounded)
-        result.line_contrasts = [
-            LineContrastModel(**_round_map(c, 4, thickness_px=1))
-            for c in payload.get("line_contrasts") or []
-        ]
-        corners = payload.get("corners")
-        result.corners = (
-            None if corners is None else [[_r(v, 1) for v in point] for point in corners]
-        )
-        result.rotation_margin = _r(payload.get("rotation_margin"), 3)
-
-    if include_cells:
-        result.cells = [CellModel(**_round_map(c, 4)) for c in payload.get("cells") or []]
-
-    return result

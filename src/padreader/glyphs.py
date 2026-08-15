@@ -4,14 +4,13 @@
 **같은 함수**로 글리프를 만든다. 둘이 다른 폰트를 쓰면 템플릿 매칭이 성립하지
 않으므로, 폰트 선택은 설정 한 곳에서만 하고 양쪽이 그것을 공유한다.
 
-폰트 경로가 설정되어 있고 Pillow 이 있으면 그 TTF 를 쓴다. 없으면 OpenCV 의
-Hershey 스트로크 폰트로 떨어진다 — 추가 의존성이 없고 어느 환경에서나 같은
-모양이 나오므로, 생성기와 판독기가 어긋날 일이 없다.
+폰트 파일이 있으면 그 TTF 를 쓰고, 없으면 OpenCV 의 Hershey 스트로크 폰트로
+떨어진다 — 추가 의존성이 없고 어느 환경에서나 같은 모양이 나오므로, 생성기와
+판독기가 어긋날 일이 없다.
 
-주의: ``assets/`` 의 legacy 샘플은 여기서 만들 수 없는 별도의 볼드 산세리프로
-인쇄되어 있다. legacy 도안으로 실제 패드를 찍었다면 TARGET_ID 판독률이
-떨어질 수 있으므로, 그 경우 ``target_id.font_path`` 에 실제 인쇄에 쓴 폰트를
-지정해야 한다.
+주의: ``assets/`` 의 legacy 샘플은 Hershey 로 만들 수 없는 별도의 볼드
+산세리프로 인쇄되어 있다. 그 도안으로 찍은 사진은 TARGET_ID 판독이 틀릴 수
+있으므로, 실제 인쇄에 쓴 폰트를 ``target_id.font_dir`` 폴더에 넣어 둔다.
 """
 
 from __future__ import annotations
@@ -26,6 +25,27 @@ import numpy as np
 # 인쇄물에 가깝다.
 _HERSHEY = cv2.FONT_HERSHEY_DUPLEX
 
+FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
+"""폰트로 볼 확장자. Pillow 이 읽을 수 있는 것들이다."""
+
+
+def find_font(font_dir: str | None) -> str | None:
+    """폴더에서 쓸 폰트 파일 하나를 고른다. 없으면 ``None``.
+
+    여러 개가 있으면 이름 순으로 첫 번째다. 둘 중 무엇이 쓰였는지 모르는
+    상태가 되지 않도록, 폴더에는 실제 인쇄에 쓴 폰트 하나만 두는 것을
+    전제로 한다.
+    """
+    if not font_dir:
+        return None
+    folder = Path(font_dir)
+    if not folder.is_dir():
+        return None
+    files = sorted(
+        p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in FONT_SUFFIXES
+    )
+    return str(files[0]) if files else None
+
 
 def _render_pillow(text: str, height_px: int, font_path: str) -> np.ndarray | None:
     try:
@@ -35,7 +55,11 @@ def _render_pillow(text: str, height_px: int, font_path: str) -> np.ndarray | No
 
     # 요청 높이에 맞을 때까지 폰트 크기를 맞춘다. 글리프의 실제 잉크 높이는
     # 폰트 크기와 다르므로 한 번 재고 비례로 보정한 뒤 확정한다.
-    probe = ImageFont.truetype(font_path, height_px)
+    try:
+        probe = ImageFont.truetype(font_path, height_px)
+    except OSError:
+        # 폰트가 아니거나 깨진 파일. 호출자가 경로를 붙여 알린다.
+        return None
     box = probe.getbbox(text)
     ink_height = box[3] - box[1]
     if ink_height <= 0:
@@ -82,16 +106,23 @@ def render_text(text: str, height_px: int, font_path: str | None = None) -> np.n
     아닐 수 있다(글리프마다 실제 잉크 높이가 다르다). 크기를 맞춰야 하는
     쪽에서 리사이즈한다.
 
+    ``font_path`` 를 지정했는데 그릴 수 없으면 실패시킨다. 조용히 내장
+    폰트로 떨어지면, 넣어 둔 폰트가 안 쓰이고 있는 것을 알 방법이 없다.
+
     ``lru_cache`` 를 쓰지만 순수 함수라 모듈 무상태성을 깨지 않는다 — 같은
     인자에 항상 같은 배열이 나온다. 호출자가 반환 배열을 수정하면 안 된다.
     """
     if height_px < 1:
         raise ValueError(f"height_px 는 1 이상이어야 한다: {height_px}")
 
-    img: np.ndarray | None = None
-    if font_path and Path(font_path).exists():
+    if font_path:
         img = _render_pillow(text, height_px, font_path)
-    if img is None:
+        if img is None:
+            raise ValueError(
+                f"폰트로 글자를 그릴 수 없다: {font_path} "
+                f"(Pillow 이 없거나 읽을 수 없는 파일이다)"
+            )
+    else:
         img = _render_hershey(text, height_px)
 
     cropped = _tight_crop(img)

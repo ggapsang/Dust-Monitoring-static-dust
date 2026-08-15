@@ -20,5 +20,7 @@ services:
     volumes:
       # 설정은 읽기 전용으로 붙인다. 서비스가 설정을 쓰는 일은 없다.
       - ./config:/app/config:ro
+      # TARGET_ID 판독용 폰트. 여기에 파일을 넣고 restart 하면 반영된다.
+      - ./assets/fonts:/app/assets/fonts:ro
       # 판독 대상 이미지. /read/path 로 업로드 없이 읽을 때 쓴다.
       - ./data:/data:ro

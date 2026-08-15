@@ -21,7 +21,7 @@ from typing import Annotated, Any
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from padreader.config import Config, load_config, resolve_config_path
@@ -37,7 +37,7 @@ app = FastAPI(title="참조 패드 판독 서비스", version="0.2.0")
 _CONFIG_PATH = resolve_config_path()
 _BASE_CONFIG: Config = load_config()
 
-CONFIG_EXAMPLE = '{"spec": "v2_protected", "grid": {"rows": 4, "cols": 4}}'
+CONFIG_EXAMPLE = '{"dust": {"depth_threshold": 0.08}}'
 """문서에 보여줄 오버라이드 예시. 폼 필드의 기본값과 함께 쓴다."""
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ IMAGE_CACHE_SIZE = 64
 IMAGE_CACHE_TTL_SEC = 1800
 """보관 시간. 눈으로 확인하는 용도라 30분이면 넉넉하다."""
 
-IMAGE_KINDS = ("overlay", "rectified")
+IMAGE_KINDS = ("baseline_rectified", "rectified", "distribution")
 
 _images: "OrderedDict[str, tuple[float, dict[str, bytes]]]" = OrderedDict()
 
@@ -86,7 +86,11 @@ def _store_images(frames: dict[str, bytes]) -> str:
 def _links(request: Request, result) -> ImageLinks | None:
     """판독 결과의 이미지를 보관하고 주소를 만든다."""
     frames: dict[str, bytes] = {}
-    for kind, frame in (("overlay", result.overlay), ("rectified", result.rectified)):
+    for kind, frame in (
+        ("baseline_rectified", result.baseline_rectified),
+        ("rectified", result.rectified),
+        ("distribution", result.distribution),
+    ):
         if frame is not None:
             encoded = _encode_png(frame)
             if encoded:
@@ -97,8 +101,9 @@ def _links(request: Request, result) -> ImageLinks | None:
     token = _store_images(frames)
     base = str(request.base_url).rstrip("/")
     return ImageLinks(
-        overlay=f"{base}/images/{token}/overlay.png",
+        baseline_rectified=f"{base}/images/{token}/baseline_rectified.png",
         rectified=f"{base}/images/{token}/rectified.png",
+        distribution=f"{base}/images/{token}/distribution.png",
     )
 
 
@@ -196,20 +201,21 @@ def get_config() -> dict[str, Any]:
 @app.post("/read", response_model=ReadResponse, summary="판독 (이미지 업로드)")
 async def read(
     request: Request,
-    file: Annotated[UploadFile, File(description="판독 사진. 순회 때 찍은 것")],
+    file: Annotated[UploadFile, File(description="판독 이미지. 순회 때 찍은 사진")],
     baseline: Annotated[
-        UploadFile, File(description="기준 사진. 패드 부착 직후 깨끗할 때 찍은 것")
+        UploadFile,
+        File(description="기준 이미지. 부착 직후 같은 위치·각도로 찍은 사진"),
     ],
-    tone: Annotated[str, Query(description="white = 백색 바탕/흑색 인쇄")] = "white",
+    tone: Annotated[str, Form(description="white = 백색 바탕/흑색 인쇄")] = "white",
     visualize: Annotated[
-        bool, Query(description="켜면 응답의 images 에 판독 결과 이미지 주소가 들어온다")
-    ] = False,
-    detail: Annotated[
-        bool, Query(description="품질 게이트·조도 정규화 진단값을 함께 받는다")
-    ] = False,
-    include_cells: Annotated[
-        bool, Query(description="구획별 값 전부(기본 88개)를 함께 받는다")
-    ] = False,
+        bool,
+        Form(
+            description=(
+                "응답의 images 에 판독 결과 이미지 주소를 담을지. "
+                "끄면 이미지를 만들지 않아 조금 빨라진다."
+            )
+        ),
+    ] = True,
     config: Annotated[
         str,
         Form(
@@ -224,49 +230,48 @@ async def read(
         ),
     ] = "",
 ) -> ReadResponse:
-    """기준 사진과 견주어 판독 사진의 오염량을 낸다.
+    """사진을 올려 판독한다.
 
-    두 사진은 같은 관측 포인트에서 같은 카메라로 찍은 것이어야 한다.
     응답 맨 위의 ``summary`` 한 줄만 봐도 결과를 알 수 있다.
+
+    입력은 전부 본문 한 군데로 받는다. 주소 뒤에 붙는 값은 없다 — 어떤 값을
+    어디에 넣어야 하는지 갈리면, 잘못 넣어도 오류 없이 기본값으로 도는 일이
+    생긴다.
     """
     overrides = _parse_overrides(config)
-    reading = _decode_upload(await file.read(), "판독 사진")
-    baseline_image = _decode_upload(await baseline.read(), "기준 사진")
+    reading = _decode_upload(await file.read(), "판독 이미지")
+    baseline_image = _decode_upload(await baseline.read(), "기준 이미지")
 
     # OpenCV 연산이 GIL 을 오래 잡는 구간이 있어 이벤트 루프에서 직접 돌리지
-    # 않는다. 두 장을 처리하므로 1초 가까이 걸린다.
+    # 않는다. 두 장을 처리한다.
     result = await run_in_threadpool(
         _run, reading, baseline_image, tone, overrides, visualize
     )
     return to_response(
-        result.to_dict(include_cells=include_cells),
-        detail=detail,
-        include_cells=include_cells,
+        result.to_dict(include_blobs=False),
         images=_links(request, result) if visualize else None,
     )
 
 
 @app.post("/read/path", response_model=ReadResponse, summary="판독 (서버 경로)")
 async def read_path(request: Request, body: ReadPathRequest) -> ReadResponse:
-    """서버에 이미 있는 두 사진을 경로로 지정해 판독한다.
+    """서버에 이미 있는 사진을 경로로 지정해 판독한다.
 
     같은 사진·같은 설정이면 ``/read`` 와 같은 값이 나온다.
     """
     reading = cv2.imread(body.path, cv2.IMREAD_COLOR)
     if reading is None:
-        raise HTTPException(404, f"판독 사진을 읽을 수 없다: {body.path}")
+        raise HTTPException(404, f"판독 이미지를 읽을 수 없다: {body.path}")
 
     baseline = cv2.imread(body.baseline_path, cv2.IMREAD_COLOR)
     if baseline is None:
-        raise HTTPException(404, f"기준 사진을 읽을 수 없다: {body.baseline_path}")
+        raise HTTPException(404, f"기준 이미지를 읽을 수 없다: {body.baseline_path}")
 
     result = await run_in_threadpool(
         _run, reading, baseline, body.tone, body.config or {}, body.visualize
     )
     return to_response(
-        result.to_dict(include_cells=body.include_cells),
-        detail=body.detail,
-        include_cells=body.include_cells,
+        result.to_dict(include_blobs=False),
         images=_links(request, result) if body.visualize else None,
     )
 
@@ -280,8 +285,9 @@ async def read_path(request: Request, body: ReadPathRequest) -> ReadResponse:
 def get_image(token: str, kind: str) -> Response:
     """``/read`` 가 돌려준 이미지 주소. 브라우저에 붙여 넣으면 바로 보인다.
 
-    ``overlay`` 는 격자와 측정 영역, 구획별 오염도를 겹쳐 그린 것이고,
-    ``rectified`` 는 정면으로 펴기만 한 것이다.
+    ``baseline_rectified`` 와 ``rectified`` 는 각각 기준 사진과 판독 사진을
+    정면으로 펴기만 한 것이고, ``distribution`` 은 그 둘의 차이를 색으로
+    그린 것이다.
 
     보관 시간이 지나면 사라진다. 판독을 다시 하면 같은 주소가 다시 생긴다 —
     주소가 이미지 내용의 해시이기 때문이다.

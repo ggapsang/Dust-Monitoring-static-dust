@@ -59,7 +59,20 @@ class CaptureParams:
 
     # --- 분진 ---
     dust_coverage: float = 0.0
-    """균일 침착 피복률 0-1. 관측 반사율은 ``(1-c)*rho_pad + c*rho_dust`` 다."""
+    """고르게 흩뿌려진 분진의 피복률 0-1.
+
+    **입자로 뿌린다.** 매끄러운 막으로 덮으면 국소 대비가 전혀 생기지 않아
+    '주변보다 어두운 것' 을 찾는 판독 방식이 원리상 아무것도 볼 수 없다.
+    실제 침착도 개별 입자가 쌓이는 것이므로 입자로 두는 편이 맞다.
+    """
+
+    dust_particle_px: int = 1
+    """입자 하나의 지름. 패드 렌더 해상도 기준 픽셀.
+
+    실제 분진은 밀가루처럼 곱다. 패드가 100mm 이고 900px 로 렌더하면 한
+    픽셀이 100um 남짓이라, 입자 하나가 픽셀 하나 안팎이 된다. 1 이면 낱
+    픽셀로 찍는다.
+    """
 
     clumps: tuple[Clump, ...] = ()
     """국소 뭉침. 균일 침착 위에 더해진다."""
@@ -115,7 +128,33 @@ def _coverage_map(
     투명창으로 덮어 분진이 앉지 않게 만든 상태를 흉내내는 것이며, 2점
     캘리브레이션이 성립하려면 물리적으로 이 조건이 갖춰져야 한다.
     """
-    coverage = np.full((size, size), float(params.dust_coverage), np.float32)
+    coverage = np.zeros((size, size), np.float32)
+
+    if params.dust_coverage > 0:
+        # 목표 피복률만큼 입자를 흩뿌린다. 개수는 입자 하나의 면적에서
+        # 역산하고, 겹침을 감안해 조금 더 뿌린 뒤 잘라낸다.
+        rng = np.random.default_rng(params.seed + 977)
+        diameter = max(1, int(params.dust_particle_px))
+        target = float(np.clip(params.dust_coverage, 0.0, 1.0))
+        speck = np.zeros((size, size), np.uint8)
+
+        if diameter <= 1:
+            # 밀가루처럼 고운 입자. 낱 픽셀로 찍는다. 겹침을 감안해
+            # 목표보다 조금 더 뿌린 뒤 실제로 덮인 비율로 맞춘다.
+            count = int(size * size * -np.log(max(1.0 - target, 1e-6)))
+            xs = rng.integers(0, size, count)
+            ys = rng.integers(0, size, count)
+            speck[ys, xs] = 1
+        else:
+            radius = diameter / 2.0
+            per_particle = np.pi * radius * radius
+            count = int(size * size * target / per_particle * 1.15)
+            xs = rng.integers(0, size, count)
+            ys = rng.integers(0, size, count)
+            for x, y in zip(xs.tolist(), ys.tolist()):
+                cv2.circle(speck, (x, y), max(1, int(round(radius))), 1, -1)
+
+        coverage += speck.astype(np.float32)
 
     if params.clumps:
         ys, xs = np.mgrid[0:size, 0:size]
