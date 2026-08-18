@@ -33,7 +33,14 @@ SOURCE_TREE_CONFIG = Path(__file__).resolve().parents[2] / "config" / "default.y
 @dataclass
 class DetectConfig:
     blur_ksize: int = 5
-    min_pad_area_ratio: float = 0.005
+    min_pad_area_ratio: float = 0.002
+    """이미지 전체 면적 대비 패드 후보의 최소 면적비.
+
+    4080x3060 화면에서 0.002 는 패드 한 변 158px 이다. 면적은 1차 거름망일
+    뿐이고 뒤에 링 구조, 사각형, 채움도, 종횡비, 테두리 규격 검증이 남아
+    있으므로 낮춰도 오검출로 이어지지 않는다. 반대로 높게 잡으면 멀리서 찍힌
+    사진이 검출을 시작하기도 전에 잘린다.
+    """
     max_pad_area_ratio: float = 0.98
     approx_epsilon_ratio: float = 0.02
     require_ring: bool = True
