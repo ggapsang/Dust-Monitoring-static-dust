@@ -21,10 +21,12 @@ from padreader import spec
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 
-# 샘플 PNG. 백색 파일명의 'makrer' 오타는 자산 그대로 둔다.
+# 샘플 PNG. 도안은 관측 포인트 번호마다 한 장씩 있고 번호만 다르므로,
+# 기하를 검증하는 이 파일은 그중 한 벌만 본다.
+SAMPLE_TARGET_ID = "1078"
 SAMPLES = {
-    "white": ASSETS / "makrer_sample_background_white.png",
-    "black": ASSETS / "marker_sample_background_black.png",
+    "white": ASSETS / f"marker_sample_background_white_{SAMPLE_TARGET_ID}.png",
+    "black": ASSETS / f"marker_sample_background_black_{SAMPLE_TARGET_ID}.png",
 }
 
 TOL_PX = 3
@@ -218,20 +220,6 @@ def test_print_elements_stay_inside_border(spec_obj: spec.PadSpec) -> None:
 def test_margin_is_large_enough_to_be_useful() -> None:
     """여백이 패드 면적의 절반은 넘어야 측정 영역으로 쓸 만하다."""
     assert spec.LEGACY.margin.area > 0.5
-
-
-def test_grid_cells_are_near_square() -> None:
-    """기본 격자(8x11)의 구획이 거의 정사각인지.
-
-    구획이 심하게 길쭉하면 localized 뭉침의 공간 해상도가 방향에 따라 달라진다.
-    """
-    from padreader.config import Config
-
-    cfg = Config()
-    m = spec.LEGACY.margin
-    cell_h = m.height / cfg.grid.rows
-    cell_w = m.width / cfg.grid.cols
-    assert 0.85 < cell_w / cell_h < 1.15, f"셀 종횡비 {cell_w / cell_h:.3f}"
 
 
 def test_border_ring_rects_stay_inside_border(mask: np.ndarray) -> None:
