@@ -4,12 +4,12 @@
 
 ``uniform_depth``
     패드 전체의 **깨끗한 톤** 대비 얼마나 어두운지. 넓고 고르게 깔린
-    분진을 재는 데 쓴다. 국소 배경 대비로 재면 넓게 퍼질수록 주변도 같이
+    분진을 재는 데 쓴다. localized 배경 대비로 재면 넓게 퍼질수록 주변도 같이
     어두워져 값이 깎이므로 쓰지 않는다.
 
 ``local_depth``
-    **국소 배경** 대비 얼마나 어두운지. 한 곳에 뭉친 덩어리를 찾는 데 쓴다.
-    국소 배경은 형태학적 닫힘으로 추정한다. 창보다 작은 얼룩은 닫힘에서
+    **localized 배경** 대비 얼마나 어두운지. 한 곳에 뭉친 덩어리를 찾는 데 쓴다.
+    localized 배경은 형태학적 닫힘으로 추정한다. 창보다 작은 얼룩은 닫힘에서
     지워지므로, 닫힘 결과가 곧 '얼룩이 없었다면 그 자리가 어땠을 밝기'다.
 
 두 깊이 모두 **테두리 잉크를 1 로 놓은 척도**로 정규화한다. 조명 정규화가
@@ -34,7 +34,7 @@ MIN_TONE_SPAN = 0.05
 구분할 대비가 없다는 뜻이다. 나눗셈이 폭주하지 않도록 막는다."""
 
 BACKGROUND_WORK_WINDOW = 21
-"""국소 배경을 계산할 때 쓸 실제 커널 크기.
+"""localized 배경을 계산할 때 쓸 실제 커널 크기.
 
 배경은 정의상 완만하므로 원본 해상도에서 큰 커널을 돌릴 이유가 없다.
 영상을 줄여 이 크기로 계산한 뒤 다시 키운다.
@@ -49,7 +49,7 @@ class DustMap:
     """패드 전체의 깨끗한 톤 대비 깊이. 여백 크기의 배열."""
 
     local_depth: np.ndarray
-    """국소 배경 대비 깊이. 여백 크기의 배열."""
+    """localized 배경 대비 깊이. 여백 크기의 배열."""
 
     measurable: np.ndarray
     """측정 대상 픽셀. 여백에서 제외 영역을 뺀 것."""
@@ -145,7 +145,7 @@ def extract_dust(
 
     measurable = ~(printed | saturated)
 
-    # --- 고름: 패드 전체의 깨끗한 톤 대비 ---
+    # --- uniform: 패드 전체의 깨끗한 톤 대비 ---
     if measurable.any():
         values = region[measurable]
         percentile = float(np.clip(cfg.clean_percentile, 50.0, 100.0))
@@ -159,7 +159,7 @@ def extract_dust(
     uniform_depth = _depth(region, clean_plane, tone)
     uniform_depth = np.where(measurable, uniform_depth, 0.0).astype(np.float32)
 
-    # --- 국소: 국소 배경 대비 ---
+    # --- localized: localized 배경 대비 ---
     window = _odd(max(3, int(round(cfg.local_window * pad_size_px))))
     background = _local_background(region, window, tone)
     local_depth = _depth(region, background, tone)

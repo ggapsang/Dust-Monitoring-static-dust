@@ -80,7 +80,7 @@ class Blob:
     """측정 가능 면적 대비 이 덩어리가 차지하는 비율."""
 
     mean_depth: float
-    """국소 배경 대비 평균 깊이. 클수록 짙다."""
+    """localized 배경 대비 평균 깊이. 클수록 짙다."""
 
     max_depth: float
     center: tuple[float, float]
@@ -98,7 +98,7 @@ class Blob:
 
 @dataclass
 class DustScores:
-    """두 축의 스코어와 종합 지표.
+    """두 축의 스코어와 combined 지표.
 
     같은 양이 쌓여도 고르게 깔린 것과 한 군데 몰린 것은 원인도 대응도
     다르다. 하나로 뭉뚱그리면 어느 쪽인지 알 수 없으므로 각각 낸다.
@@ -113,7 +113,7 @@ class DustScores:
     면적 비율 x 짙기를 정규화한 값이다."""
 
     combined: float | None = None
-    """종합 지표. 확률합 ``u + l - u*l`` 이다. 두 축을 독립 사건으로 보고
+    """combined 지표. 확률합 ``u + l - u*l`` 이다. 두 축을 독립 사건으로 보고
     '적어도 하나가 발생할 확률' 에 대응시켰다. 0-1 을 벗어나지 않는다."""
 
     uniform_raw: float | None = None

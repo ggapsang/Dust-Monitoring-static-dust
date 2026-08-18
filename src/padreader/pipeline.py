@@ -82,7 +82,7 @@ def _analyze(
     size = cfg.pad_size_px
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-    detection = detect_pad(gray, tone, cfg.detect)
+    detection = detect_pad(gray, tone, cfg.detect, spec.border_thickness)
     if detection is None:
         return None, (FailureReason.PAD_NOT_FOUND, "테두리 사각형을 찾지 못했다")
 

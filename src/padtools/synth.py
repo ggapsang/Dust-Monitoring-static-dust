@@ -41,7 +41,7 @@ PRINT_LIGHT_REFLECTANCE = 0.85
 
 @dataclass
 class Clump:
-    """국소 뭉침 하나. 좌표는 패드 정규화 좌표."""
+    """localized 뭉침 하나. 좌표는 패드 정규화 좌표."""
 
     x: float
     y: float
@@ -61,7 +61,7 @@ class CaptureParams:
     dust_coverage: float = 0.0
     """고르게 흩뿌려진 분진의 피복률 0-1.
 
-    **입자로 뿌린다.** 매끄러운 막으로 덮으면 국소 대비가 전혀 생기지 않아
+    **입자로 뿌린다.** 매끄러운 막으로 덮으면 localized 대비가 전혀 생기지 않아
     '주변보다 어두운 것' 을 찾는 판독 방식이 원리상 아무것도 볼 수 없다.
     실제 침착도 개별 입자가 쌓이는 것이므로 입자로 두는 편이 맞다.
     """
@@ -75,7 +75,7 @@ class CaptureParams:
     """
 
     clumps: tuple[Clump, ...] = ()
-    """국소 뭉침. 균일 침착 위에 더해진다."""
+    """localized 뭉침. 균일 침착 위에 더해진다."""
 
     # --- 자세 ---
     tilt_deg: float = 0.0

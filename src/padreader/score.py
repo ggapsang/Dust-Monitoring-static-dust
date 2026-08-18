@@ -7,12 +7,12 @@
 두 축을 각각 낸다. 같은 양이 쌓여도 넓고 고르게 깔린 것과 한 곳에 뭉친
 것은 원인도 대응도 다르기 때문이다.
 
-    고름   = 패드 전체 밝기 변화의 평균
-    국소   = 덩어리들 중 가장 크고 짙은 것
+    uniform   = 패드 전체 밝기 변화의 평균
+    localized   = 덩어리들 중 가장 크고 짙은 것
 
-종합 지표는 ``u + l - u*l`` 이다. 한쪽만 높아도 종합이 그 값 이상이고, 둘 다
-높으면 각각보다 높으며, 한 축이 1 이면 종합도 1 이다. 조정 파라미터는 두지
-않는다.
+combined 지표는 ``u + l - u*l`` 이다. 한쪽만 높아도 combined 값이 그 값 이상이고,
+둘 다 높으면 각각보다 높으며, 한 축이 1 이면 combined 값도 1 이다. 조정
+파라미터는 두지 않는다.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def find_blobs(
             )
         )
 
-    # 크고 짙은 순. 국소 스코어가 이 순서의 맨 앞을 쓴다.
+    # 크고 짙은 순. localized 스코어가 이 순서의 맨 앞을 쓴다.
     blobs.sort(key=lambda b: b.area_ratio * b.mean_depth, reverse=True)
     return blobs, mask
 
@@ -90,7 +90,7 @@ def compute_scores(
 
     Returns
     -------
-    (스코어, 덩어리 목록, 고름 차이 맵)
+    (스코어, 덩어리 목록, uniform 차이 맵)
     """
     # 두 사진 모두에서 측정 가능한 곳만 본다. 한쪽이라도 제외된 자리는
     # 비교가 성립하지 않는다.
@@ -109,7 +109,7 @@ def compute_scores(
     uniform_raw = float(uniform_diff.sum() / measurable_px)
 
     blobs, _ = find_blobs(local_diff, measurable_px, dust_cfg)
-    # 가장 크고 짙은 덩어리 하나가 국소 오염의 크기다. 면적 비율과 짙기를
+    # 가장 크고 짙은 덩어리 하나가 localized 오염의 크기다. 면적 비율과 짙기를
     # 곱해 '넓게 옅은 것' 과 '좁게 짙은 것' 을 같은 저울에 올린다.
     localized_raw = blobs[0].area_ratio * blobs[0].mean_depth if blobs else 0.0
 

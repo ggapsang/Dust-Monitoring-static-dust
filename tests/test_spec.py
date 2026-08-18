@@ -223,7 +223,7 @@ def test_margin_is_large_enough_to_be_useful() -> None:
 def test_grid_cells_are_near_square() -> None:
     """기본 격자(8x11)의 구획이 거의 정사각인지.
 
-    구획이 심하게 길쭉하면 국소 뭉침의 공간 해상도가 방향에 따라 달라진다.
+    구획이 심하게 길쭉하면 localized 뭉침의 공간 해상도가 방향에 따라 달라진다.
     """
     from padreader.config import Config
 

@@ -5,7 +5,7 @@
 - 촬영 각도와 거리를 바꿔도 스코어가 한 범위로 수렴하는지
 - 조명·노출·블랙레벨을 바꿔도 스코어 변동이 억제되는지
 - 도포량이 늘면 스코어가 단조 증가하는지
-- 국소 뭉침과 균일 침착을 구획 값 산포가 구분하는지
+- localized 뭉침과 균일 침착을 구획 값 산포가 구분하는지
 - 위 항목이 흑·백 두 패드에서 각각 성립하는지
 
 합성의 한계를 분명히 해 둔다. 여기 통과한다고 실촬영에서 통과하는 것이
@@ -159,7 +159,7 @@ def test_overexposure_is_visible_in_quality(tone: str) -> None:
 
 
 def test_dispersion_separates_clumped_from_uniform(tone: str) -> None:
-    """같은 총 침착량이라도 국소 뭉침과 균일 침착이 구분되는지.
+    """같은 총 침착량이라도 localized 뭉침과 균일 침착이 구분되는지.
 
     ``p90 - p50`` 이 갈라져야 한다. 균일하면 모든 구획이 같이 움직여 거의
     0 이고, 뭉치면 소수 구획만 튀어 크게 벌어진다.
@@ -253,7 +253,7 @@ def test_score_statistic_is_configurable(tone: str) -> None:
     p90 = run(tone, params, score={"statistic": "p90"})
     maximum = run(tone, params, score={"statistic": "max"})
 
-    # 국소 오염이라 대표값을 올릴수록 커져야 한다. 평균을 쓰면 이 차이가
+    # localized 오염이라 대표값을 올릴수록 커져야 한다. 평균을 쓰면 이 차이가
     # 희석되어 사라진다.
     assert p50.dust_score < p90.dust_score < maximum.dust_score
 

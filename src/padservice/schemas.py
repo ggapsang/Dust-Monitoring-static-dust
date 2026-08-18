@@ -4,7 +4,7 @@
 스코어가 묻힌다.
 
     성공 여부와 실패 사유
-    두 축 스코어와 종합 지표 (각각 0-1)
+    두 축 스코어와 combined 지표 (각각 0-1)
     제외 사유별 픽셀 수
     품질 게이트 산출값 네 가지
     판독된 TARGET_ID
@@ -62,11 +62,11 @@ class ImageLinks(BaseModel):
 
 
 class ScoresModel(BaseModel):
-    """두 축의 스코어와 종합 지표. 각각 0-1."""
+    """두 축의 스코어와 combined 지표. 각각 0-1."""
 
     uniform: float | None = Field(default=None, description="고르게 오염된 정도")
     localized: float | None = Field(default=None, description="한 군데가 심하게 오염된 정도")
-    combined: float | None = Field(default=None, description="종합 지표")
+    combined: float | None = Field(default=None, description="두 축을 합친 값")
 
 
 class QualityModel(BaseModel):
@@ -111,7 +111,7 @@ class ReadResponse(BaseModel):
             "examples": [
                 {
                     "success": True,
-                    "summary": "판독 성공 · 종합 0.307 (고름 0.036 · 국소 0.305) · 386ms",
+                    "summary": "판독 성공 · combined 0.307 (uniform 0.036 · localized 0.305) · target_id 1078 · 386ms",
                     "scores": {"uniform": 0.036, "localized": 0.305, "combined": 0.307},
                     "quality": {
                         "sharpness": 0.0029,
@@ -164,11 +164,11 @@ def build_summary(payload: dict[str, Any]) -> str:
     parts = ["판독 성공"]
     if scores.get("combined") is not None:
         parts.append(
-            f"종합 {scores['combined']:.3f}"
-            f" (고름 {scores.get('uniform') or 0:.3f} · 국소 {scores.get('localized') or 0:.3f})"
+            f"combined {scores['combined']:.3f}"
+            f" (uniform {scores.get('uniform') or 0:.3f} · localized {scores.get('localized') or 0:.3f})"
         )
     if payload.get("target_id"):
-        parts.append(f"ID {payload['target_id']}")
+        parts.append(f"target_id {payload['target_id']}")
     return " · ".join(parts) + tail
 
 

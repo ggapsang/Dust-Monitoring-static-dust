@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>AMR 관측 기록 — 분진 판독 관제</title>
+<title>패트롤 결과 관리</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="dashboard/data.js"></script>
@@ -30,11 +30,8 @@ button{font-family:inherit;cursor:pointer}
 
 .app{display:grid;grid-template-columns:240px 1fr;grid-template-rows:58px 1fr;height:100vh;min-height:0}
 .topbar{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:0 22px;background:var(--panel);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:11px;width:218px;flex:0 0 auto}
-.brand .dot{width:28px;height:28px;border-radius:7px;background:var(--pri);display:grid;place-items:center;font-weight:800;font-size:14px;color:#fff;box-shadow:0 2px 6px rgba(248,101,23,.35)}
-.brand b{font-weight:700;letter-spacing:-.01em;font-size:15px}
-.sel{display:flex;align-items:center;gap:8px;padding:8px 13px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;font-size:13px;font-weight:600;color:var(--tx)}
-.sel small{color:var(--tx3);font-weight:500}
+.brand{display:flex;align-items:center;flex:0 0 auto}
+.brand b{font-weight:800;letter-spacing:-.02em;font-size:16px}
 .spacer{flex:1}
 .clock{color:var(--tx2);font-size:13px;font-weight:500}
 
@@ -44,18 +41,14 @@ button{font-family:inherit;cursor:pointer}
 .nav a:hover{background:var(--panel3);color:var(--tx)}
 .nav a.on{background:var(--pri-t);color:var(--pri6);border-color:#F8D5BC}
 .nav a .ic{width:18px;height:18px;flex:0 0 auto}
-.nav .foot{margin-top:auto;padding:14px 12px 4px;color:var(--tx3);font-size:12px;line-height:1.7;border-top:1px solid var(--line)}
 
 .main{overflow:auto;padding:28px 30px 48px;min-width:0}
 .wrap{max-width:1360px;margin:0 auto}
 .view{display:none}
 .view.on{display:block}
 .head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px}
-.head h1{font-size:24px;font-weight:800;letter-spacing:-.02em;margin:0 0 5px}
-.head p{margin:0;color:var(--tx3);font-size:13.5px}
+.head h1{font-size:24px;font-weight:800;letter-spacing:-.02em;margin:0}
 
-.note{background:#FFFBF4;border:1px solid #F3E2C7;border-radius:var(--r);padding:13px 17px;margin-bottom:18px;font-size:13px;color:#8A6A2F;line-height:1.65}
-.note b{color:#6F5322}
 
 .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:16px}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sh)}
@@ -66,17 +59,6 @@ button{font-family:inherit;cursor:pointer}
 .kpi .sub{margin-top:10px;font-size:12px;color:var(--tx3);font-weight:500}
 .kpi .bar{margin-top:12px;height:6px;border-radius:4px;background:var(--panel3);overflow:hidden}
 .kpi .bar i{display:block;height:100%;border-radius:4px}
-
-.ptstrip{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}
-.ptc{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 18px;box-shadow:var(--sh);cursor:pointer}
-.ptc:hover{border-color:var(--line2)}
-.ptc .t{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.ptc .t b{font-size:15px;font-weight:800;letter-spacing:-.01em}
-.ptc .t .meta{color:var(--tx3);font-size:12px;font-weight:600}
-.ptc .spark{height:52px;margin:6px 0 4px}
-.ptc .spark svg{width:100%;height:52px;display:block}
-.ptc .lg{display:flex;gap:14px;margin-top:8px;font-size:11.5px;color:var(--tx2);font-weight:600}
-.ptc .lg em{font-style:normal;color:var(--tx3);font-weight:500}
 
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh);margin-bottom:18px}
 .card .ch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line)}
@@ -129,9 +111,17 @@ td.r,th.r{text-align:right}
 .dhead .chip .cv{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
 .dhead .chip.tot .cv{color:var(--pri6)}
 
-.seq{display:flex;gap:6px;flex-wrap:wrap}
-.seq button{padding:7px 13px;border-radius:7px;border:1px solid var(--line2);background:var(--panel2);color:var(--tx2);font-size:13px;font-weight:700}
-.seq button.on{background:var(--pri-t);border-color:#F8D5BC;color:var(--pri6)}
+/* 회차 선택. 회차가 늘어도 폭이 그대로여야 하므로 버튼을 늘어놓지 않는다. */
+.seqbar{display:flex;align-items:center;gap:14px}
+.seqbar .step{width:32px;height:32px;border-radius:8px;border:1px solid var(--line2);background:var(--panel2);
+  color:var(--tx2);font-size:15px;font-weight:800;display:grid;place-items:center;flex:0 0 auto}
+.seqbar .step:hover:not(:disabled){background:var(--panel3);color:var(--tx)}
+.seqbar .step:disabled{opacity:.35;cursor:default}
+.seqbar input[type=range]{flex:1;min-width:120px}
+.seqbar .now{display:flex;align-items:baseline;gap:5px;min-width:96px;justify-content:flex-end;flex:0 0 auto}
+.seqbar .now b{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.seqbar .now small{color:var(--tx3);font-size:12.5px;font-weight:600}
+.seqbar .file{color:var(--tx3);font-size:12px;font-weight:500;min-width:170px;text-align:right;flex:0 0 auto}
 
 .photos{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
 .tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}
@@ -141,8 +131,6 @@ td.r,th.r{text-align:right}
 .tile .thost img{width:100%;height:100%;object-fit:cover;display:block}
 .tile .thost .none{color:var(--tx3);font-size:12.5px}
 
-.legend{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--tx2);font-weight:600}
-.legend .grad{width:120px;height:9px;border-radius:5px;background:linear-gradient(90deg,#00007F,#0000FF,#00FFFF,#7FFF7F,#FFFF00,#FF0000,#7F0000)}
 
 .trendhead{display:flex;gap:10px;align-items:center}
 .seg{display:flex;gap:4px}
@@ -162,8 +150,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .rangebox output{min-width:64px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;font-size:15px}
 .gradebar{display:flex;height:38px;border-radius:8px;overflow:hidden;border:1px solid var(--line2);margin-top:5px;font-size:12.5px;font-weight:800}
 .gradebar div{display:grid;place-items:center;color:#fff}
-.formula{font-variant-numeric:tabular-nums;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:12px 14px;font-size:14px;color:var(--tx2);font-weight:500}
-.formula b{color:var(--pri6);font-weight:800}
 
 .cfg{width:100%;border-collapse:collapse}
 .cfg th{text-align:left;padding:9px 14px;font-size:11.5px;color:var(--tx3);font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--panel2);border-bottom:1px solid var(--line)}
@@ -173,6 +159,37 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .cfg td.d{color:var(--tx3);font-size:12.5px;line-height:1.5}
 .cfg .off{color:var(--tx3);font-weight:600}
 .cfg tr:last-child td{border-bottom:none}
+.cfg td.k .path{margin-top:3px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
+  font-weight:500;color:var(--tx3);letter-spacing:-.01em}
+.cfg td.v .unit{margin-left:5px;font-size:12px;font-weight:600;color:var(--tx3)}
+.cfg td.v .was{margin-top:4px;color:var(--tx3);font-size:12px;font-weight:500}
+.cfg td.d .form{margin-top:7px;width:fit-content;font-size:11.5px;font-weight:700;color:var(--tx2);
+  background:var(--panel3);border:1px solid var(--line2);border-radius:6px;padding:3px 9px;white-space:nowrap}
+.cfg tr.changed{background:#FFF8F2}
+.cfg tr.changed td.k::after{content:"수정됨";margin-left:9px;font-size:10.5px;font-weight:800;color:var(--pri6);
+  background:var(--pri-t);border-radius:999px;padding:2px 7px;vertical-align:middle}
+.cfg input{width:170px;text-align:right;font-family:inherit;font-size:13.5px;font-weight:700;
+  font-variant-numeric:tabular-nums;color:var(--tx);background:var(--panel2);
+  border:1px solid var(--line2);border-radius:6px;padding:6px 9px}
+.cfg input:focus{outline:none;border-color:var(--pri);background:#fff}
+.cfg input.bad{border-color:var(--err);background:var(--err-t)}
+
+.btn{padding:8px 15px;border-radius:8px;border:1px solid var(--line2);background:var(--panel2);
+  color:var(--tx2);font-size:13px;font-weight:700}
+.btn:hover{background:var(--panel3);color:var(--tx)}
+.btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+.btn.pri:hover{background:var(--pri6);color:#fff}
+.btn:disabled{opacity:.4;cursor:default}
+.btnrow{display:flex;gap:8px;align-items:center}
+
+.patch{border-top:1px solid var(--line);padding:18px 20px;background:var(--panel2)}
+.patch .ph{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}
+.patch .ph b{font-size:13.5px;font-weight:800}
+.patch textarea{width:100%;min-height:104px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:12.5px;line-height:1.6;color:var(--tx);background:var(--panel);border:1px solid var(--line2);
+  border-radius:8px;padding:11px 13px}
+.patch .hintbox{color:var(--tx3);font-size:12.5px;line-height:1.6;margin-top:11px}
+.patch .hintbox code{background:var(--panel3);padding:2px 6px;border-radius:5px}
 
 .err-screen{max-width:640px;margin:80px auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:28px 32px;box-shadow:var(--sh)}
 .err-screen h2{margin:0 0 12px;font-size:19px}
@@ -185,21 +202,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand"><span class="dot">D</span><b>AMR 관측 기록</b></div>
-    <div class="sel"><small>현장</small> 에코프로비엠 포항</div>
-    <div class="sel"><small>데이터</small> <span id="srcLabel">—</span></div>
+    <div class="brand"><b>패트롤 결과 관리</b></div>
     <div class="spacer"></div>
     <div class="clock num" id="clock">—</div>
   </header>
 
   <nav class="nav">
     <div class="grp">운영</div>
-    <a class="on" data-view="dash"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg> 대시보드</a>
-    <a data-view="detail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h18"/></svg> 관측 포인트 판독</a>
+    <a class="on" data-view="dash"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg> 요약</a>
+    <a data-view="detail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h18"/></svg> 상세 보기</a>
     <a data-view="history"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg> 판정 이력</a>
     <div class="grp">관리</div>
     <a data-view="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1l-.4-2.5H9.6l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4.8l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg> 설정</a>
-    <div class="foot">방식 · 참조 패드 광학 측정<br/>지표 · 고름 / 국소 / 종합<br/><span id="footSrc">표본 대기</span></div>
   </nav>
 
   <main class="main">
@@ -208,17 +222,15 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   <!-- 대시보드 -->
   <section class="view on" id="dash">
     <div class="head">
-      <div><h1>분진 판독 대시보드</h1><p>개소마다 부착 직후 기준 사진을 두고, 회차마다 그 대비 침착량을 낸다 · 종합 = 고름 + 국소 − 고름 × 국소</p></div>
+      <div><h1>요약</h1></div>
     </div>
-    <div class="note" id="dashNote"></div>
     <div class="kpis" id="kpiRow"></div>
-    <div class="ptstrip" id="ptStrip"></div>
     <div class="card">
       <div class="ch"><h3>관측 포인트 현황</h3><span class="rt" id="dashRt"></span></div>
       <table>
         <thead><tr>
           <th style="width:88px">개소</th><th>표본</th><th>톤</th><th class="r">회차</th>
-          <th class="r">고름</th><th class="r">국소</th><th class="r">종합</th>
+          <th class="r">uniform</th><th class="r">localized</th><th class="r">total</th>
           <th class="r">직전 대비</th><th class="r">누적</th><th>상태</th>
         </tr></thead>
         <tbody id="dashBody"></tbody>
@@ -229,7 +241,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   <!-- 관측 포인트 판독 -->
   <section class="view" id="detail">
     <div class="head">
-      <div><h1>관측 포인트 판독</h1><p>기준 정합 사진 · 판독 정합 사진 · 오염도 분포 사진</p></div>
+      <div><h1>상세 보기</h1></div>
     </div>
     <div class="detail">
       <div class="ptlist">
@@ -239,23 +251,20 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
       <div>
         <div class="dhead" id="dHead"></div>
         <div class="card">
-          <div class="ch"><h3>회차 선택</h3><div class="seq" id="seqSeg"></div></div>
+          <div class="ch"><h3>회차 선택</h3>
+            <div class="seqbar">
+              <button class="step" id="seqPrev" title="이전 회차">‹</button>
+              <input type="range" id="seqRange" min="1" max="1" step="1" value="1">
+              <button class="step" id="seqNext" title="다음 회차">›</button>
+              <span class="now"><b id="seqNow">1</b><small id="seqTot">/ 1</small></span>
+              <span class="file" id="seqFile">—</span>
+            </div>
+          </div>
         </div>
         <div class="photos">
           <div class="tile"><div class="tcap">기준 정합 <span id="capBase">부착 직후</span></div><div class="thost" id="ph_base"></div></div>
           <div class="tile"><div class="tcap">판독 정합 <span id="capCur">—</span></div><div class="thost" id="ph_cur"></div></div>
           <div class="tile"><div class="tcap">오염도 분포 <span id="capViz">기준 대비</span></div><div class="thost" id="ph_viz"></div></div>
-        </div>
-        <div class="card">
-          <div class="ch"><h3>분포 이미지 읽는 법</h3></div>
-          <div class="cb">
-            <div class="legend"><span>깨끗</span><span class="grad"></span><span id="heatTop">심함</span></div>
-            <div class="desc" style="color:var(--tx3);font-size:12.5px;margin-top:11px;line-height:1.6">
-              기준 사진 대비 그 자리가 얼마나 어두워졌는지를 색으로 칠한다. 색 범위는 고정이라
-              두 장을 색으로 바로 견줄 수 있다. 초록 사각형이 측정 영역이며, 그 바깥의 인쇄물은
-              측정에서 빠진다.
-            </div>
-          </div>
         </div>
         <div class="card">
           <div class="ch">
@@ -273,10 +282,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
           </div>
         </div>
         <div class="card">
-          <div class="ch"><h3>회차 판독 상세</h3><span class="rt">품질 산출값과 제외 화소</span></div>
+          <div class="ch"><h3>회차 판독 상세</h3><span class="rt">회차별 산출값</span></div>
           <table><thead><tr>
-            <th style="width:64px">회차</th><th>파일</th><th class="r">고름</th><th class="r">국소</th><th class="r">종합</th>
-            <th class="r">선명도</th><th class="r">패드 크기</th><th class="r">크기 차이</th><th class="r">제외 화소</th><th>ID</th>
+            <th style="width:64px">회차</th><th>파일</th><th class="r">uniform</th><th class="r">localized</th><th class="r">total</th>
+            <th class="r">선명도</th><th class="r">제외 화소</th><th>target_id 인식 결과</th>
           </tr></thead><tbody id="detBody"></tbody></table>
         </div>
       </div>
@@ -285,13 +294,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 
   <!-- 판정 이력 -->
   <section class="view" id="history">
-    <div class="head"><div><h1>판정 이력</h1><p>전 개소 · 전 회차. 개소 간 종합값 직접 비교는 성립하지 않는다 — 등급으로만 견준다</p></div></div>
+    <div class="head"><div><h1>판정 이력</h1></div></div>
     <div class="card">
       <div class="ch"><h3>전체 판독</h3><span class="rt" id="histCount"></span></div>
       <table>
         <thead><tr>
           <th style="width:88px">개소</th><th class="r">회차</th><th>파일</th>
-          <th class="r">고름</th><th class="r">국소</th><th class="r">종합</th>
+          <th class="r">uniform</th><th class="r">localized</th><th class="r">total</th>
           <th class="r">직전 대비</th><th class="r">누적</th><th>상태</th><th class="r">소요</th>
         </tr></thead>
         <tbody id="histBody"></tbody>
@@ -301,17 +310,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 
   <!-- 설정 -->
   <section class="view" id="settings">
-    <div class="head"><div><h1>설정</h1><p>위쪽은 대시보드가 쓰는 판정 임계값, 아래쪽은 이 표본을 판독할 때 실제로 적용된 판독기 설정</p></div></div>
+    <div class="head"><div><h1>설정</h1></div></div>
 
     <div class="setgrid">
-      <div class="card"><div class="ch"><h3>등급 임계값</h3><span class="rt">종합 기준</span></div>
+      <div class="card"><div class="ch"><h3>등급 임계값</h3><span class="rt">total 기준</span></div>
         <div class="cb">
           <div class="gradebar" id="gradeBar"></div>
-          <div class="field"><div class="fl"><b>정상 → 주의 경계</b><span class="hint">종합</span></div>
+          <div class="field"><div class="fl"><b>정상 → 주의 경계</b><span class="hint">total</span></div>
             <div class="rangebox"><input type="range" min="0" max="1" step="0.01" value="0.15" id="t1"><output id="t1o">0.15</output></div></div>
-          <div class="field"><div class="fl"><b>주의 → 경고 경계</b><span class="hint">종합</span></div>
+          <div class="field"><div class="fl"><b>주의 → 경고 경계</b><span class="hint">total</span></div>
             <div class="rangebox"><input type="range" min="0" max="1" step="0.01" value="0.30" id="t2"><output id="t2o">0.30</output></div></div>
-          <div class="field"><div class="desc" style="margin:0">실증 전 잠정값이다. 표본 14회차의 종합이 0.008~0.360 범위라
+          <div class="field"><div class="desc" style="margin:0">실증 전 잠정값이다. 표본 14회차의 total 값이 0.008~0.360 범위라
             그 안에서 세 등급이 갈리도록 잡아 두었다. 개소마다 촬영 거리·각도·조명이 고정이라 감도가 다르므로,
             개소 간 비교는 이 등급 수준에서만 성립한다.</div></div>
         </div>
@@ -327,16 +336,32 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
             <div class="desc">회차마다 이만큼의 증가는 정상 변동으로 보고 빼고 더한다. 작게 잡으면 미세한 만성
               침착도 누적값이 올라가고, 크게 잡으면 확실히 늘 때만 올라간다.</div>
             <div class="rangebox"><input type="range" min="0" max="0.1" step="0.005" value="0.02" id="slack"><output id="slacko">0.020</output></div></div>
-          <div class="field"><div class="fl"><b>종합 지표</b></div>
-            <div class="formula">종합 = <b>고름 + 국소 − 고름 × 국소</b></div></div>
         </div>
       </div>
     </div>
 
     <div class="card" style="margin-top:18px">
-      <div class="ch"><h3>판독기 설정</h3><span class="rt">이 표본을 판독할 때 적용된 값 · 조회 전용</span></div>
+      <div class="ch"><h3>판독기 설정</h3>
+        <div class="btnrow">
+          <span class="rt" id="cfgRt">이 표본을 판독할 때 적용된 값</span>
+          <button class="btn" id="cfgEditBtn">수정</button>
+          <button class="btn" id="cfgResetBtn" style="display:none">되돌리기</button>
+          <button class="btn pri" id="cfgDoneBtn" style="display:none">완료</button>
+        </div>
+      </div>
       <table class="cfg"><thead><tr><th>항목</th><th style="text-align:right">값</th><th>설명</th></tr></thead>
       <tbody id="cfgBody"></tbody></table>
+      <div class="patch" id="cfgPatch" style="display:none">
+        <div class="ph"><b>바뀐 값</b>
+          <div class="btnrow">
+            <button class="btn" id="patchJson">판독 요청용 JSON</button>
+            <button class="btn" id="patchYaml">default.yaml 용</button>
+            <button class="btn" id="patchCopy">복사</button>
+          </div>
+        </div>
+        <textarea id="cfgOut" readonly spellcheck="false"></textarea>
+        <div class="hintbox" id="cfgHint"></div>
+      </div>
     </div>
   </section>
 
@@ -397,7 +422,7 @@ function imgSrc(rel) { return 'dashboard/' + rel; }
 /* ------------------------------------------------------------------ */
 /* 파생값. 절대량 · 추세 · 누적을 개소마다 낸다.                          */
 /*                                                                     */
-/*   절대량  기준 사진 대비 지금까지 쌓인 총량 (종합 그대로)              */
+/*   절대량  기준 사진 대비 지금까지 쌓인 총량 (total 그대로)                    */
 /*   추세    직전 회차 대비 증분. 급성 오염은 여기가 튄다                 */
 /*   누적    증분에서 여유를 뺀 값을 계속 더한다 (CUSUM). 회차마다 조금씩 */
 /*           늘어 개별 회차로는 안 잡히는 만성 침착을 잡는다              */
@@ -428,26 +453,6 @@ function derive() {
 /* ------------------------------------------------------------------ */
 /* 대시보드                                                            */
 /* ------------------------------------------------------------------ */
-function sparkline(pt) {
-  const rs = pt.readings.filter(r => r.success);
-  if (rs.length < 2) return '';
-  const W = 260, H = 52, pad = 3;
-  const max = Math.max(P.t2 * 1.05, ...rs.map(r => r.scores.combined));
-  const x = i => pad + (W - 2 * pad) * i / (rs.length - 1);
-  const y = v => H - pad - (H - 2 * pad) * (v / max);
-  const pts = rs.map((r, i) => `${x(i).toFixed(1)},${y(r.scores.combined).toFixed(1)}`).join(' ');
-  const area = `${pad},${H - pad} ${pts} ${x(rs.length - 1).toFixed(1)},${H - pad}`;
-  const line = (v, col) => v < max
-    ? `<line x1="${pad}" y1="${y(v).toFixed(1)}" x2="${W - pad}" y2="${y(v).toFixed(1)}" stroke="${col}" stroke-width="1" stroke-dasharray="4 3" opacity=".75"/>` : '';
-  const dots = rs.map((r, i) =>
-    `<circle cx="${x(i).toFixed(1)}" cy="${y(r.scores.combined).toFixed(1)}" r="${i === rs.length - 1 ? 3.4 : 2}" fill="${STDOT[r.grade]}"/>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <polygon points="${area}" fill="rgba(248,101,23,.10)"/>
-    ${line(P.t1, '#F59E0B')}${line(P.t2, '#EF4444')}
-    <polyline points="${pts}" fill="none" stroke="#F86517" stroke-width="2" stroke-linejoin="round"/>
-    ${dots}</svg>`;
-}
-
 function renderDash() {
   const pts = D.points;
   const ok = pts.filter(p => p.grade === '정상').length;
@@ -468,22 +473,8 @@ function renderDash() {
      <div class="bar"><i style="width:${wn / pts.length * 100}%;background:var(--warn)"></i></div></div>
    <div class="kpi"><div class="lb">경고</div><div class="vv num" style="color:var(--err-tx)">${er}</div>
      <div class="bar"><i style="width:${er / pts.length * 100}%;background:var(--err)"></i></div></div>
-   <div class="kpi acc"><div class="lb">최신 회차 최고 종합</div><div class="vv num">${top.toFixed(2)}</div>
+   <div class="kpi acc"><div class="lb">최신 회차 최고 total</div><div class="vv num">${top.toFixed(2)}</div>
      <div class="sub">등급 경계 ${P.t1.toFixed(2)} / ${P.t2.toFixed(2)}</div></div>`;
-
-  document.getElementById('ptStrip').innerHTML = pts.map(p => {
-    const n = p.readings.length;
-    const last = p.last;
-    return `<div class="ptc" data-id="${p.id}">
-      <div class="t"><b>${p.id}</b><span class="meta">${n}회차 · ${p.set}</span></div>
-      <div class="spark">${sparkline(p)}</div>
-      <div class="lg">
-        <span><em>종합</em> ${last ? last.scores.combined.toFixed(3) : '—'}</span>
-        <span><em>누적</em> ${last ? last.cusum.toFixed(3) : '—'}</span>
-        <span style="margin-left:auto">${stPill(p.grade)}</span>
-      </div></div>`;
-  }).join('');
-  document.querySelectorAll('.ptc').forEach(c => c.onclick = () => { selectPoint(c.dataset.id); go('detail'); });
 
   document.getElementById('dashBody').innerHTML = pts.map(p => {
     const r = p.last;
@@ -504,10 +495,6 @@ function renderDash() {
     tr.onclick = () => { selectPoint(tr.dataset.id); go('detail'); });
 
   document.getElementById('dashRt').textContent = `개소마다 최신 회차 기준`;
-  document.getElementById('dashNote').innerHTML =
-    `<b>표본 화면이다.</b> AMR 순회가 아직 없어 <code>assets/samples/</code> 의 실촬영 사진을
-     판독기에 그대로 넣은 결과를 늘어놓았다. 개소 하나가 표본 폴더 하나이고, 회차는 그 안의
-     촬영 순서다. 시각·설비 위치·AMR 배정은 아직 없다.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -567,16 +554,21 @@ function selectPoint(id, seq) {
     <div class="id"><div class="nm">${p.id}</div><div class="lo">${p.set} · 기준 ${p.baseline_source}</div></div>
     <div class="chip"><span class="cl">톤</span><span class="cv" style="font-size:13px">${toneCell(p.tone)}</span></div>
     <div class="chip"><span class="cl">회차</span><span class="cv">${curSeq}<span style="font-size:13px;color:var(--tx3)"> / ${p.readings.length}</span></span></div>
-    <div class="chip"><span class="cl">고름</span><span class="cv">${r.success ? r.scores.uniform.toFixed(3) : '—'}</span></div>
-    <div class="chip"><span class="cl">국소</span><span class="cv">${r.success ? r.scores.localized.toFixed(3) : '—'}</span></div>
-    <div class="chip tot"><span class="cl">종합</span><span class="cv">${r.success ? r.scores.combined.toFixed(3) : '—'}</span></div>
+    <div class="chip"><span class="cl">uniform</span><span class="cv">${r.success ? r.scores.uniform.toFixed(3) : '—'}</span></div>
+    <div class="chip"><span class="cl">localized</span><span class="cv">${r.success ? r.scores.localized.toFixed(3) : '—'}</span></div>
+    <div class="chip tot"><span class="cl">total</span><span class="cv">${r.success ? r.scores.combined.toFixed(3) : '—'}</span></div>
     <div class="chip"><span class="cl">누적</span><span class="cv">${r.cusum.toFixed(3)}</span></div>
     <div class="chip"><span class="cl">상태</span><span class="cv" style="font-size:12px">${stPill(r.grade)}</span></div>`;
 
-  document.getElementById('seqSeg').innerHTML = p.readings.map(x =>
-    `<button class="${x.seq === curSeq ? 'on' : ''}" data-seq="${x.seq}">${x.seq}회차</button>`).join('');
-  document.querySelectorAll('#seqSeg button').forEach(b =>
-    b.onclick = () => selectPoint(curId, +b.dataset.seq));
+  // 회차가 몇십 개로 늘어도 폭이 그대로여야 하므로 슬라이더로 훑는다.
+  const last = p.readings.length;
+  const range = document.getElementById('seqRange');
+  range.min = 1; range.max = last; range.value = curSeq;
+  document.getElementById('seqNow').textContent = curSeq;
+  document.getElementById('seqTot').textContent = `/ ${last}`;
+  document.getElementById('seqFile').textContent = r.source;
+  document.getElementById('seqPrev').disabled = curSeq <= 1;
+  document.getElementById('seqNext').disabled = curSeq >= last;
 
   const tile = (host, src, alt) => {
     document.getElementById(host).innerHTML = src
@@ -588,14 +580,11 @@ function selectPoint(id, seq) {
   tile('ph_viz', r.success ? r.images.distribution : null, '오염도 분포');
   document.getElementById('capBase').textContent = p.baseline_source;
   document.getElementById('capCur').textContent = r.source;
-  document.getElementById('capViz').textContent = r.success ? `종합 ${r.scores.combined.toFixed(3)}` : '판독 불가';
-
-  const hm = D.config && D.config.visualize ? D.config.visualize.heat_max : null;
-  document.getElementById('heatTop').textContent = hm ? `심함 (${hm})` : '심함';
+  document.getElementById('capViz').textContent = r.success ? `total ${r.scores.combined.toFixed(3)}` : '판독 불가';
 
   document.getElementById('detBody').innerHTML = p.readings.map(x => {
     if (!x.success) return `<tr><td class="tid">${x.seq}</td><td class="muted">${x.source}</td>
-      <td class="r muted" colspan="8">${x.failure_detail || '판독 불가'}</td></tr>`;
+      <td class="r muted" colspan="6">${x.failure_detail || '판독 불가'}</td></tr>`;
     const ex = Object.values(x.excluded_px || {}).reduce((a, b) => a + b, 0);
     return `<tr>
       <td class="tid">${x.seq}</td><td class="muted">${x.source}</td>
@@ -603,8 +592,6 @@ function selectPoint(id, seq) {
       <td class="r num">${x.scores.localized.toFixed(3)}</td>
       <td class="r"><span class="sc tot" style="color:${STC[x.grade]}">${x.scores.combined.toFixed(3)}</span></td>
       <td class="r num muted">${x.quality.sharpness.toFixed(4)}</td>
-      <td class="r num muted">${x.quality.pad_size_px.toFixed(0)}px</td>
-      <td class="r num muted">${(x.quality.pad_size_diff_ratio * 100).toFixed(1)}%</td>
       <td class="r num muted">${ex.toLocaleString()}</td>
       <td class="muted num">${x.target_id || '—'}</td></tr>`;
   }).join('');
@@ -647,10 +634,10 @@ function drawTrend() {
   if (trendMode === 'abs') {
     const get = k => rs.map(r => (r.success ? +r.scores[k].toFixed(4) : null));
     datasets = [
-      { label: '종합', data: get('combined'), borderColor: '#F86517', backgroundColor: 'rgba(248,101,23,.10)',
+      { label: 'total', data: get('combined'), borderColor: '#F86517', backgroundColor: 'rgba(248,101,23,.10)',
         fill: true, tension: .3, borderWidth: 2.4, pointRadius: 3 },
-      { label: '고름', data: get('uniform'), borderColor: '#A8A29B', borderWidth: 1.4, pointRadius: 2, fill: false, tension: .3 },
-      { label: '국소', data: get('localized'), borderColor: '#60A5FA', borderWidth: 1.4, pointRadius: 2,
+      { label: 'uniform', data: get('uniform'), borderColor: '#A8A29B', borderWidth: 1.4, pointRadius: 2, fill: false, tension: .3 },
+      { label: 'localized', data: get('localized'), borderColor: '#60A5FA', borderWidth: 1.4, pointRadius: 2,
         fill: false, tension: .3, borderDash: [4, 3] },
       { label: `주의 ${P.t1.toFixed(2)}`, data: labels.map(() => P.t1), borderColor: '#F59E0B',
         borderWidth: 1.2, borderDash: [6, 4], pointRadius: 0 },
@@ -679,6 +666,13 @@ function drawTrend() {
   document.getElementById('trendDesc').textContent = TREND_DESC[trendMode];
 }
 
+document.getElementById('seqRange').oninput = e => selectPoint(curId, +e.target.value);
+document.getElementById('seqPrev').onclick = () => selectPoint(curId, Math.max(1, curSeq - 1));
+document.getElementById('seqNext').onclick = () => {
+  const n = D.points.find(x => x.id === curId).readings.length;
+  selectPoint(curId, Math.min(n, curSeq + 1));
+};
+
 document.querySelectorAll('#trendSeg button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#trendSeg button').forEach(x => x.classList.remove('on'));
   b.classList.add('on'); trendMode = b.dataset.mode; drawTrend();
@@ -687,29 +681,65 @@ document.querySelectorAll('#trendSeg button').forEach(b => b.onclick = () => {
 /* ------------------------------------------------------------------ */
 /* 설정                                                                */
 /* ------------------------------------------------------------------ */
+/* [한글 이름, 값 뒤에 붙일 단위, 입력 형식, 설명]
+   고치는 사람이 무엇을 어떤 단위로 넣어야 하는지 화면에서 바로 알아야
+   한다. 파라미터 경로는 항목 아래에 그대로 적어, 뽑아낸 JSON/YAML 과
+   같은 이름을 보게 한다. */
 const CFG_LABELS = {
-  'spec': ['패드 규격', '도안의 좌표 규격 이름. legacy 가 assets/ 의 실제 도안이다'],
-  'pad_size_px': ['정합 출력 크기', '정면 보정 결과 한 변의 픽셀 수. 모든 영역 좌표가 여기에 비례한다'],
-  'pad_size_mm': ['실제 치수', '채우면 mm 환산이 붙는다'],
-  'detect.threshold_scales': ['이진화 임계 사다리', '앞의 값으로 패드를 못 찾으면 임계를 인쇄색 쪽으로 넓혀 다시 본다'],
-  'detect.min_pad_area_ratio': ['최소 패드 면적비', '화면에서 이보다 작게 찍힌 사각형은 패드 후보로 보지 않는다'],
-  'detect.min_solidity': ['최소 채움도', '테두리가 끊겨 모양이 무너진 후보를 거른다'],
-  'quality.max_edge_rise_ratio': ['선명도 한계', '테두리 에지가 패드 폭의 몇 %를 차지하는가. 넘으면 판독 불가'],
-  'quality.min_pad_size_px': ['최소 패드 크기', '너무 작게 찍히면 판독 불가'],
-  'quality.max_pad_size_diff_ratio': ['패드 크기 차이 한계', '기준 사진과 크기가 이보다 다르면 촬영 위치가 바뀐 것이라 비교가 성립하지 않는다'],
-  'quality.saturation_bright_level': ['밝은 포화 화소값', '이 값 이상은 정반사로 보고 측정에서 뺀다'],
-  'quality.saturation_dark_level': ['어두운 포화 화소값', '이 값 이하는 측정에서 뺀다'],
-  'normalize.gradient_correction': ['조명 기울기 보정', '테두리를 따라 밝기가 변하면 그만큼 되돌린다'],
-  'normalize.ring_samples': ['테두리 표본 수', '조명 평면을 맞출 때 링에서 뽑는 점의 개수'],
-  'dust.local_window': ['국소 배경 창', '패드 한 변 대비 비율. 이 창보다 큰 덩어리는 배경으로 흡수된다'],
-  'dust.depth_threshold': ['국소 분진 임계', '주변보다 이만큼 어두우면 분진으로 본다. 테두리를 1 로 놓은 척도'],
-  'dust.min_blob_px': ['최소 덩어리 크기', '이보다 작으면 노이즈로 버린다'],
-  'dust.clean_percentile': ['깨끗한 톤 분위수', '여백의 어느 분위수를 깨끗한 상태로 볼지. 고름 축의 기준이 된다'],
-  'score.uniform_reference': ['고름 1.0 기준값', '비어 있으면 원값을 그대로 0-1 로 자른다'],
-  'score.localized_reference': ['국소 1.0 기준값', '덩어리의 면적 비율 × 짙기'],
-  'visualize.heat_max': ['분포 이미지 빨강 기준', '이 값에서 빨강이 된다. 고정이라 두 장을 색으로 견줄 수 있다'],
-  'target_id.font_dir': ['ID 판독 폰트 폴더', '실제 인쇄에 쓴 폰트를 넣으면 그것으로 숫자 템플릿을 그린다'],
+  'spec': ['패드 도안 규격', '', 'legacy = 실물 도안 · v2, v2_protected = 미제작',
+    '판독기가 들고 보는 지도. 테두리·모서리 블록·번호·선군이 패드 어디에 인쇄되어 있는지를 '
+    + '정규화 좌표로 적어 둔 것이다. 실물 패드와 다른 이름을 넣으면 엉뚱한 자리를 잰다'],
+  'pad_size_px': ['정합 출력 크기', 'px', '정수 · 보통 800~1600',
+    '정면 보정 결과 한 변의 픽셀 수. 모든 영역 좌표가 여기에 비례한다'],
+  'pad_size_mm': ['패드 실제 치수', 'mm', '실수 · null 이면 mm 환산 없음',
+    '패드 한 변의 실제 길이. 채우면 결과에 mm 환산이 붙는다'],
+  'detect.threshold_scales': ['이진화 임계 사다리', '배', '숫자 목록 · 1.0 = 오츠 그대로',
+    '앞의 값으로 패드를 못 찾으면 임계를 인쇄색 쪽으로 넓혀 다시 본다'],
+  'detect.min_pad_area_ratio': ['최소 패드 면적비', '', '0~1 비율 · 사진 전체 넓이 대비',
+    '화면에서 이보다 작게 찍힌 사각형은 패드 후보로 보지 않는다'],
+  'detect.min_solidity': ['최소 채움도', '', '0~1 비율 · 1 이 반듯한 사각형',
+    '테두리가 끊겨 모양이 무너진 후보를 거른다'],
+  'quality.max_edge_rise_ratio': ['선명도 한계', '', '0~1 비율 · null 이면 검사 안 함',
+    '밝기가 바뀌는 거리가 패드 폭의 몇 배인가. 작을수록 선명하다. 넘으면 판독 불가'],
+  'quality.min_pad_size_px': ['최소 패드 크기', 'px', '정수 · null 이면 검사 안 함',
+    '사진 속 패드 한 변이 이보다 작으면 판독 불가'],
+  'quality.max_pad_size_diff_ratio': ['패드 크기 차이 한계', '', '0~1 비율 · null 이면 검사 안 함',
+    '기준 사진과 크기가 이보다 다르면 촬영 위치가 바뀐 것이라 비교가 성립하지 않는다'],
+  'quality.saturation_bright_level': ['밝은 포화 화소값', '', '0~255 밝기 · null 이면 빼지 않음',
+    '이 값 이상은 정반사로 보고 측정에서 뺀다'],
+  'quality.saturation_dark_level': ['어두운 포화 화소값', '', '0~255 밝기 · null 이면 빼지 않음',
+    '이 값 이하는 측정에서 뺀다'],
+  'normalize.gradient_correction': ['조명 기울기 보정', '', 'true / false',
+    '테두리를 따라 밝기가 변하면 그만큼 되돌린다'],
+  'normalize.ring_samples': ['테두리 표본 수', '점', '정수 · 3 이상, 보통 수백',
+    '조명 평면을 맞출 때 테두리에서 뽑는 점의 개수'],
+  'dust.local_window': ['localized 배경 창', '', '0~1 비율 · 패드 한 변 대비',
+    '이 창보다 큰 덩어리는 배경으로 흡수되어 가장자리만 잡힌다'],
+  'dust.depth_threshold': ['localized 분진 임계', '', '0~1 깊이 · 테두리 잉크가 1',
+    '주변보다 이만큼 어두우면 분진으로 본다'],
+  'dust.min_blob_px': ['최소 덩어리 크기', '화소', '정수 · 화소 개수',
+    '이보다 작은 덩어리는 노이즈로 버린다'],
+  'dust.clean_percentile': ['깨끗한 톤 분위수', '분위', '50~100 · 높을수록 민감',
+    '여백의 어느 분위수를 깨끗한 상태로 볼지. uniform 축의 기준이 된다'],
+  'score.uniform_reference': ['uniform 1.0 기준값', '', '0~1 · null 이면 원값 그대로',
+    '이 값이면 uniform 스코어를 1.0 으로 본다'],
+  'score.localized_reference': ['localized 1.0 기준값', '', '0~1 · null 이면 원값 그대로',
+    '덩어리의 면적 비율 × 짙기가 이 값이면 1.0 으로 본다'],
+  'visualize.heat_max': ['분포 이미지 빨강 기준', '', '0~1 깊이 · null 이면 사진마다 자동',
+    '이 값에서 빨강이 된다. 고정이라 두 장을 색으로 견줄 수 있다'],
+  'target_id.font_dir': ['target_id 판독 폰트 폴더', '', '폴더 경로 · null 이면 내장 폰트',
+    '실제 인쇄에 쓴 TTF/OTF 를 넣으면 그것으로 숫자 템플릿을 그린다'],
 };
+
+/* 판독기 설정은 이 화면이 서버에 써 넣을 수 없다. 정적 파일이고, 설정을
+   바꾸는 API 도 없다. 그래서 여기서는 값을 고쳐 보고 **바뀐 부분만** 뽑아
+   준다. 뽑은 것을 판독 요청에 얹거나 default.yaml 에 옮겨 적으면 된다.
+   화면에서 바로 고쳐지는 척하면, 실제 판독에 쓰인 값과 화면 값이 갈린다. */
+let cfgEdit = false, cfgOutMode = 'json';
+const cfgChanges = {};   // 경로 -> 새 값
+
+const cfgRead = path => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), D.config || {});
+const cfgNow = path => (path in cfgChanges ? cfgChanges[path] : cfgRead(path));
 
 function cfgValue(v) {
   if (v === null || v === undefined) return '<span class="off">미적용</span>';
@@ -717,16 +747,127 @@ function cfgValue(v) {
   if (Array.isArray(v)) return v.join(' → ');
   return String(v);
 }
+function cfgText(v) {
+  if (v === null || v === undefined) return 'null';
+  if (Array.isArray(v)) return JSON.stringify(v);
+  return String(v);
+}
+function cfgParse(text) {
+  const t = text.trim();
+  if (t === '') return { ok: false };
+  try { return { ok: true, value: JSON.parse(t) }; }
+  catch { return { ok: true, value: t }; }   // 따옴표 없이 쓴 문자열도 받는다
+}
+const cfgSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
 function renderConfig() {
-  const c = D.config || {};
-  const rows = Object.entries(CFG_LABELS).map(([path, [label, desc]]) => {
-    const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), c);
-    if (v === undefined) return '';
-    return `<tr><td class="k">${label}</td><td class="v">${cfgValue(v)}</td><td class="d">${desc}</td></tr>`;
+  const rows = Object.entries(CFG_LABELS).map(([path, [label, unit, form, desc]]) => {
+    const base = cfgRead(path);
+    if (base === undefined) return '';
+    const now = cfgNow(path);
+    const changed = path in cfgChanges;
+    const shown = now === null || now === undefined || !unit
+      ? cfgValue(now)
+      : `${cfgValue(now)}<span class="unit">${unit}</span>`;
+    const cell = cfgEdit
+      ? `<input data-path="${path}" value="${cfgText(now).replace(/"/g, '&quot;')}" spellcheck="false">`
+        + (unit ? `<span class="unit">${unit}</span>` : '')
+      : shown;
+    const note = changed && !cfgEdit
+      ? `<div class="was">원래 ${cfgText(base)}</div>`
+      : '';
+    return `<tr class="${changed ? 'changed' : ''}">` +
+           `<td class="k">${label}<div class="path">${path}</div></td>` +
+           `<td class="v">${cell}${note}</td>` +
+           `<td class="d">${desc}<div class="form">${form}</div></td></tr>`;
   }).join('');
   document.getElementById('cfgBody').innerHTML = rows ||
     `<tr><td class="d" colspan="3">설정을 읽지 못했다</td></tr>`;
+
+  document.querySelectorAll('#cfgBody input').forEach(el => {
+    el.onchange = () => {
+      const path = el.dataset.path;
+      const parsed = cfgParse(el.value);
+      if (!parsed.ok) { el.classList.add('bad'); return; }
+      el.classList.remove('bad');
+      if (cfgSame(parsed.value, cfgRead(path))) delete cfgChanges[path];
+      else cfgChanges[path] = parsed.value;
+      renderConfig();
+      renderPatch();
+    };
+  });
+  renderPatch();
 }
+
+function cfgTree() {
+  const out = {};
+  for (const [path, value] of Object.entries(cfgChanges)) {
+    const keys = path.split('.');
+    let node = out;
+    for (const k of keys.slice(0, -1)) node = node[k] = node[k] || {};
+    node[keys[keys.length - 1]] = value;
+  }
+  return out;
+}
+function toYaml(obj, depth) {
+  const pad = '  '.repeat(depth);
+  return Object.entries(obj).map(([k, v]) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) return `${pad}${k}:\n${toYaml(v, depth + 1)}`;
+    if (v === null) return `${pad}${k}: null`;
+    if (Array.isArray(v)) return `${pad}${k}: [${v.join(', ')}]`;
+    return `${pad}${k}: ${v}`;
+  }).join('\n');
+}
+
+function renderPatch() {
+  const n = Object.keys(cfgChanges).length;
+  const box = document.getElementById('cfgPatch');
+  box.style.display = n ? '' : 'none';
+  document.getElementById('cfgRt').textContent = n
+    ? `${n}개 항목을 고쳤다 — 아직 서버에 반영되지 않았다`
+    : '이 표본을 판독할 때 적용된 값';
+  if (!n) return;
+
+  const tree = cfgTree();
+  // 배열이 줄마다 쪼개지면 붙여 넣을 때 읽기 나쁘다. 한 줄로 되돌린다.
+  const json = JSON.stringify(tree, null, 1)
+    .replace(/\[[^\[\]]*\]/g, m => m.replace(/\s+/g, ' ').replace('[ ', '[').replace(' ]', ']'));
+  document.getElementById('cfgOut').value = cfgOutMode === 'json' ? json : toYaml(tree, 0);
+  document.getElementById('cfgHint').innerHTML = cfgOutMode === 'json'
+    ? `판독 한 건에만 얹는다. 서버 설정은 그대로 남는다 —
+       <code>/read</code> 의 <code>config</code> 칸에 붙여 넣는다.`
+    : `영구히 바꾼다 — <code>config/default.yaml</code> 의 같은 자리에 옮겨 적고
+       <code>docker compose restart padreader</code> 한다. 그 뒤
+       <code>python -m padtools.dashboard</code> 를 다시 돌리면 이 화면도 새 값으로 바뀐다.`;
+  document.getElementById('patchJson').classList.toggle('pri', cfgOutMode === 'json');
+  document.getElementById('patchYaml').classList.toggle('pri', cfgOutMode === 'yaml');
+}
+
+function cfgMode(edit) {
+  cfgEdit = edit;
+  document.getElementById('cfgEditBtn').style.display = edit ? 'none' : '';
+  document.getElementById('cfgResetBtn').style.display = edit ? '' : 'none';
+  document.getElementById('cfgDoneBtn').style.display = edit ? '' : 'none';
+  renderConfig();
+}
+document.getElementById('cfgEditBtn').onclick = () => cfgMode(true);
+document.getElementById('cfgDoneBtn').onclick = () => cfgMode(false);
+document.getElementById('cfgResetBtn').onclick = () => {
+  for (const k of Object.keys(cfgChanges)) delete cfgChanges[k];
+  renderConfig();
+};
+document.getElementById('patchJson').onclick = () => { cfgOutMode = 'json'; renderPatch(); };
+document.getElementById('patchYaml').onclick = () => { cfgOutMode = 'yaml'; renderPatch(); };
+document.getElementById('patchCopy').onclick = () => {
+  const out = document.getElementById('cfgOut');
+  out.select(); out.setSelectionRange(0, out.value.length);
+  // 파일로 열면 클립보드 API 가 막히는 브라우저가 있어 옛 방식으로 떨어진다.
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  const btn = document.getElementById('patchCopy');
+  btn.textContent = ok ? '복사됨' : '직접 복사 (Ctrl+C)';
+  setTimeout(() => { btn.textContent = '복사'; }, 1600);
+};
 
 function paintGrade() {
   document.getElementById('gradeBar').innerHTML =
@@ -777,8 +918,6 @@ function refresh() {
   selectPoint(curId, curSeq);
 }
 
-document.getElementById('srcLabel').textContent = `${D.points.length}개소 표본`;
-document.getElementById('footSrc').textContent = `표본 ${D.source}`;
 
 bindParam('t1', 't1o', 't1', 2);
 bindParam('t2', 't2o', 't2', 2);

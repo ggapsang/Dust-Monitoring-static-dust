@@ -18,8 +18,8 @@
 한계를 적어 둔다. 이 나눗셈은 센서 바닥값을 소거하지 못한다. 관측값이 실제로는
 ``바닥값 + 게인 x 조도 x 반사율`` 이라서, 분모인 테두리가 저반사면일수록
 바닥값이 차지하는 비중이 커진다. 흰 바탕 패드의 검은 테두리가 특히 그렇다.
-그래서 분진 판정은 이 값의 절대 크기가 아니라 **국소 배경 대비**로 한다
-(``dust.py``). 국소적으로는 바닥값도 상수라 빼는 순간 사라진다.
+그래서 분진 판정은 이 값의 절대 크기가 아니라 **주변 배경 대비**로 한다
+(``dust.py``). 좁은 범위 안에서는 바닥값도 상수라 빼는 순간 사라진다.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class Normalization:
 
 
 def _median_mad(values: np.ndarray) -> tuple[float, float]:
-    """중앙값과 MAD. 국소 이물이 섞여도 흔들리지 않는다."""
+    """중앙값과 MAD. 한두 군데 이물이 섞여도 흔들리지 않는다."""
     median = float(np.median(values))
     mad = float(np.median(np.abs(values - median)))
     return median, mad
