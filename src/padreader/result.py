@@ -32,6 +32,13 @@ class FailureReason(str, Enum):
     BASELINE_UNREADABLE = "baseline_unreadable"
     """기준 이미지를 판독하지 못했다. 상세 사유는 ``failure_detail`` 에 담긴다."""
 
+    BASELINE_PAD_MISSING = "baseline_pad_missing"
+    """판독 이미지에는 있는 패드가 기준 이미지에는 없다.
+
+    한 화면에 여러 패드가 찍혔을 때, 짝을 찾지 못한 패드에 붙는다. 같은
+    번호의 패드가 기준 사진에도 있어야 부착 이후 쌓인 양을 낼 수 있다.
+    """
+
     PAD_SIZE_MISMATCH = "pad_size_mismatch"
     """기준 이미지와 판독 이미지의 패드 크기가 크게 달라 비교가 성립하지 않는다."""
 
@@ -192,7 +199,7 @@ class NormalizationInfo:
 
 @dataclass
 class PadReadResult:
-    """판독 결과. 이 객체 하나가 모듈의 출력이다."""
+    """패드 하나의 판독 결과."""
 
     success: bool
     failure_reason: FailureReason | None = None
@@ -259,3 +266,51 @@ class PadReadResult:
         if include_blobs:
             out["blobs"] = [b.to_dict() for b in self.blobs]
         return out
+
+
+@dataclass
+class PadReadBatch:
+    """사진 한 쌍의 판독 결과. 패드마다 한 건씩 담는다.
+
+    한 화면에 패드가 여러 개 찍히는 일이 현장에서 실제로 일어난다. 그때 가장
+    크게 찍힌 하나만 돌려주면 나머지는 조용히 사라지고, 어느 것이 돌아왔는지도
+    알 수 없다. 그래서 찾은 패드를 전부 담는다.
+
+    ``success`` 는 **하나라도 판독됐는가** 다. 개별 패드의 성패는 각 항목의
+    ``success`` 를 본다.
+    """
+
+    success: bool
+    pads: list[PadReadResult] = field(default_factory=list)
+
+    failure_reason: FailureReason | None = None
+    failure_detail: str | None = None
+    """사진 자체를 못 읽었거나 패드를 하나도 못 찾았을 때만 채운다."""
+
+    pad_tone: str | None = None
+    elapsed_ms: float | None = None
+
+    @classmethod
+    def failed(
+        cls, reason: FailureReason, detail: str | None = None
+    ) -> "PadReadBatch":
+        return cls(success=False, failure_reason=reason, failure_detail=detail)
+
+    @property
+    def first(self) -> PadReadResult:
+        """가장 크게 찍힌 패드. 한 장에 하나만 찍히는 흔한 경우를 위한 지름길."""
+        if self.pads:
+            return self.pads[0]
+        return PadReadResult.failed(
+            self.failure_reason or FailureReason.PAD_NOT_FOUND, self.failure_detail
+        )
+
+    def to_dict(self, include_blobs: bool = True) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "failure_reason": self.failure_reason.value if self.failure_reason else None,
+            "failure_detail": self.failure_detail,
+            "pad_tone": self.pad_tone,
+            "elapsed_ms": _f(self.elapsed_ms),
+            "pads": [p.to_dict(include_blobs) for p in self.pads],
+        }

@@ -25,7 +25,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.concurrency import run_in_threadpool
 
 from padreader.config import Config, load_config, resolve_config_path
-from padreader.pipeline import read_pad
+from padreader.pipeline import read_pads
 from padreader.spec import SPECS
 
 from .schemas import ImageLinks, ReadPathRequest, ReadResponse, to_response
@@ -83,13 +83,13 @@ def _store_images(frames: dict[str, bytes]) -> str:
     return token
 
 
-def _links(request: Request, result) -> ImageLinks | None:
-    """판독 결과의 이미지를 보관하고 주소를 만든다."""
+def _links(request: Request, pad) -> ImageLinks | None:
+    """패드 하나의 결과 이미지를 보관하고 주소를 만든다."""
     frames: dict[str, bytes] = {}
     for kind, frame in (
-        ("baseline_rectified", result.baseline_rectified),
-        ("rectified", result.rectified),
-        ("distribution", result.distribution),
+        ("baseline_rectified", pad.baseline_rectified),
+        ("rectified", pad.rectified),
+        ("distribution", pad.distribution),
     ):
         if frame is not None:
             encoded = _encode_png(frame)
@@ -105,6 +105,13 @@ def _links(request: Request, result) -> ImageLinks | None:
         rectified=f"{base}/images/{token}/rectified.png",
         distribution=f"{base}/images/{token}/distribution.png",
     )
+
+
+def _all_links(request: Request, batch, visualize: bool):
+    """패드 순서와 같은 이미지 주소 목록. 패드마다 따로 보관한다."""
+    if not visualize:
+        return None
+    return [_links(request, pad) for pad in batch.pads]
 
 
 # ---------------------------------------------------------------------------
@@ -153,13 +160,13 @@ def _decode_upload(data: bytes, label: str) -> np.ndarray:
 
 def _run(
     image: np.ndarray,
-    baseline: np.ndarray,
+    baseline: list[np.ndarray],
     tone: str,
     overrides: dict[str, Any],
     visualize: bool,
 ):
     try:
-        return read_pad(
+        return read_pads(
             image,
             baseline,
             pad_tone=tone,
@@ -203,8 +210,16 @@ async def read(
     request: Request,
     file: Annotated[UploadFile, File(description="판독 이미지. 순회 때 찍은 사진")],
     baseline: Annotated[
-        UploadFile,
-        File(description="기준 이미지. 부착 직후 같은 위치·각도로 찍은 사진"),
+        list[UploadFile],
+        File(
+            description=(
+                "기준 이미지. 부착 직후 깨끗할 때 찍은 사진이다. **여러 장을 "
+                "같은 이름으로 올릴 수 있다** — 기준은 사진이 아니라 패드 단위라, "
+                "한 화면에 여러 패드가 찍히면 각자의 기준이 필요하다. "
+                "그 자리에서 보이는 것보다 넉넉히 보내도 되고, 짝이 없는 기준은 "
+                "쓰이지 않는다."
+            )
+        ),
     ],
     tone: Annotated[str, Form(description="white = 백색 바탕/흑색 인쇄")] = "white",
     visualize: Annotated[
@@ -240,16 +255,21 @@ async def read(
     """
     overrides = _parse_overrides(config)
     reading = _decode_upload(await file.read(), "판독 이미지")
-    baseline_image = _decode_upload(await baseline.read(), "기준 이미지")
+    baselines = [
+        _decode_upload(await item.read(), f"기준 이미지 {index + 1}번째")
+        for index, item in enumerate(baseline)
+    ]
+    if not baselines:
+        raise HTTPException(400, "기준 이미지가 없다")
 
     # OpenCV 연산이 GIL 을 오래 잡는 구간이 있어 이벤트 루프에서 직접 돌리지
-    # 않는다. 두 장을 처리한다.
+    # 않는다.
     result = await run_in_threadpool(
-        _run, reading, baseline_image, tone, overrides, visualize
+        _run, reading, baselines, tone, overrides, visualize
     )
     return to_response(
         result.to_dict(include_blobs=False),
-        images=_links(request, result) if visualize else None,
+        images=_all_links(request, result, visualize),
     )
 
 
@@ -263,16 +283,24 @@ async def read_path(request: Request, body: ReadPathRequest) -> ReadResponse:
     if reading is None:
         raise HTTPException(404, f"판독 이미지를 읽을 수 없다: {body.path}")
 
-    baseline = cv2.imread(body.baseline_path, cv2.IMREAD_COLOR)
-    if baseline is None:
-        raise HTTPException(404, f"기준 이미지를 읽을 수 없다: {body.baseline_path}")
+    paths = body.baseline_path
+    paths = [paths] if isinstance(paths, str) else list(paths)
+    if not paths:
+        raise HTTPException(400, "기준 이미지 경로가 없다")
+
+    baselines = []
+    for path in paths:
+        image = cv2.imread(path, cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(404, f"기준 이미지를 읽을 수 없다: {path}")
+        baselines.append(image)
 
     result = await run_in_threadpool(
-        _run, reading, baseline, body.tone, body.config or {}, body.visualize
+        _run, reading, baselines, body.tone, body.config or {}, body.visualize
     )
     return to_response(
         result.to_dict(include_blobs=False),
-        images=_links(request, result) if body.visualize else None,
+        images=_all_links(request, result, body.visualize),
     )
 
 

@@ -333,12 +333,12 @@ def _band_off(strip: np.ndarray, expected: float, tolerance: float) -> bool:
     return abs(float(np.median(widths)) - expected) > tolerance
 
 
-def detect_pad(
+def detect_pads(
     gray: np.ndarray, tone: str, cfg: DetectConfig, border_thickness: float
-) -> Detection | None:
-    """패드를 찾아 서브픽셀 꼭짓점을 반환한다. 못 찾으면 ``None``.
+) -> list[Detection]:
+    """사진에서 패드를 **전부** 찾는다. 면적 큰 순. 없으면 빈 목록.
 
-    세 겹으로 시도한다.
+    이진화를 세 겹으로 시도한다.
 
     1. 사진 전체에 오츠 임계 하나 (가장 흔한 경우이고 가장 빠르다)
     2. 그 임계를 인쇄색 쪽으로 넓혀 가며 재시도 — 패드가 밝게 찍혀 테두리가
@@ -346,22 +346,50 @@ def detect_pad(
     3. 주변 평균과 견주는 국소 이진화 — 요철 도장면이나 이음새처럼 배경이
        어두워 테두리가 배경과 한 덩어리가 되는 사진을 건진다
 
-    앞 단계에서 찾으면 뒤는 보지 않는다. 꼭짓점은 어느 방식으로 찾았든 원본
-    밝기 단면에서 다시 맞추므로, 정밀도가 이진화 방식에 좌우되지 않는다.
+    **하나를 찾아도 나머지 단계를 마저 본다.** 한 화면의 두 패드가 서로 다른
+    임계에서만 보이는 일이 실제로 있다 — 밝은 자리의 패드는 첫 단계에서
+    잡히고, 그늘에 있는 패드는 국소 이진화까지 가야 잡힌다. 앞 단계에서
+    멈추면 뒤엣것이 조용히 사라진다. 같은 패드가 여러 단계에서 잡히는 것은
+    겹침으로 걸러 낸다.
+
+    꼭짓점은 어느 방식으로 찾았든 원본 밝기 단면에서 다시 맞추므로, 정밀도가
+    이진화 방식에 좌우되지 않는다.
     """
+    found: list[Detection] = []
+
+    def collect(binary: np.ndarray) -> None:
+        for det in _detect_in(gray, binary, tone, cfg, border_thickness):
+            if not any(_overlaps(det, other) for other in found):
+                found.append(det)
+
     for scale in cfg.threshold_scales or [1.0]:
-        found = _detect_in(gray, _binarize(gray, tone, cfg, scale), tone, cfg, border_thickness)
-        if found is not None:
-            return found
+        collect(_binarize(gray, tone, cfg, scale))
 
-    if not cfg.local_fallback:
-        return None
+    if cfg.local_fallback:
+        for open_px in cfg.local_open_steps or [0]:
+            collect(_binarize_local(gray, tone, cfg, open_px))
 
-    for open_px in cfg.local_open_steps or [0]:
-        found = _detect_in(gray, _binarize_local(gray, tone, cfg, open_px), tone, cfg, border_thickness)
-        if found is not None:
-            return found
-    return None
+    found.sort(key=lambda d: d.area, reverse=True)
+    return found
+
+
+def detect_pad(
+    gray: np.ndarray, tone: str, cfg: DetectConfig, border_thickness: float
+) -> Detection | None:
+    """가장 크게 찍힌 패드 하나. 여러 개가 찍혔는지 알 수 없으므로 진단용이다."""
+    found = detect_pads(gray, tone, cfg, border_thickness)
+    return found[0] if found else None
+
+
+def _overlaps(a: Detection, b: Detection) -> bool:
+    """두 검출이 사실상 같은 패드인지. 중심 거리가 작은 쪽 크기의 절반 안이면 같다.
+
+    바깥 테두리로 맞춘 것과 안쪽에서 되짚은 것이 같은 패드를 두 번 내놓을 수
+    있어, 목록에 담기 전에 걸러 낸다.
+    """
+    ca, cb = a.corners.mean(axis=0), b.corners.mean(axis=0)
+    smaller = min(np.sqrt(a.area), np.sqrt(b.area))
+    return float(np.linalg.norm(ca - cb)) < smaller * 0.5
 
 
 def _detect_in(
@@ -370,18 +398,25 @@ def _detect_in(
     tone: str,
     cfg: DetectConfig,
     border_thickness: float,
-) -> Detection | None:
-    """이진 이미지 하나에서 패드를 찾는다.
+) -> list[Detection]:
+    """이진 이미지 하나에서 패드를 전부 찾는다.
 
     후보마다 바깥 테두리로 먼저 맞춰 보고, 맞춘 결과가 규격과 어긋나면 안쪽
     테두리로 다시 맞춘다. 둘 다 어긋나면 그 후보를 버린다.
     """
+    out: list[Detection] = []
+
+    def keep(det: Detection) -> None:
+        if not any(_overlaps(det, other) for other in out):
+            out.append(det)
+
     for quad, hole in _candidate_quads(binary, cfg):
         found = _fit_quad(gray, quad, cfg)
         if found is not None and border_matches(
             gray, found.corners, tone, border_thickness, cfg
         ):
-            return found
+            keep(found)
+            continue
 
         if hole is None:
             continue
@@ -391,16 +426,17 @@ def _detect_in(
         outer = _outer_from_inner(inner.corners, border_thickness)
         if outer is None:
             continue
-        found = Detection(
-            corners=outer,
-            coarse_corners=quad,
-            area=quad_area(outer),
-            edge_sample_counts=inner.edge_sample_counts,
-            edge_residuals=inner.edge_residuals,
-        )
         if border_matches(gray, outer, tone, border_thickness, cfg):
-            return found
-    return None
+            keep(
+                Detection(
+                    corners=outer,
+                    coarse_corners=quad,
+                    area=quad_area(outer),
+                    edge_sample_counts=inner.edge_sample_counts,
+                    edge_residuals=inner.edge_residuals,
+                )
+            )
+    return out
 
 
 def _outer_from_inner(inner: np.ndarray, border_thickness: float) -> np.ndarray | None:

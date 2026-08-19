@@ -25,13 +25,14 @@
 """
 
 from .config import Config, load_config
-from .pipeline import read_pad
+from .pipeline import read_pad, read_pads
 from .result import (
     Blob,
     DustScores,
     ExclusionReason,
     FailureReason,
     NormalizationInfo,
+    PadReadBatch,
     PadReadResult,
     QualityMetrics,
     TargetIdStatus,
@@ -46,6 +47,7 @@ __all__ = [
     "FailureReason",
     "LEGACY",
     "NormalizationInfo",
+    "PadReadBatch",
     "PadReadResult",
     "PadSpec",
     "QualityMetrics",
@@ -54,4 +56,5 @@ __all__ = [
     "get_spec",
     "load_config",
     "read_pad",
+    "read_pads",
 ]
