@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.openapi.utils import get_openapi
 
 from padreader.config import Config, load_config, resolve_config_path
 from padreader.pipeline import read_pads
@@ -39,6 +40,41 @@ _BASE_CONFIG: Config = load_config()
 
 CONFIG_EXAMPLE = '{"dust": {"depth_threshold": 0.08}}'
 """문서에 보여줄 오버라이드 예시. 폼 필드의 기본값과 함께 쓴다."""
+
+
+def _mark_binary(node: Any) -> None:
+    """파일 필드에 ``format: binary`` 를 같이 달아 준다.
+
+    FastAPI 는 OpenAPI 3.1 로 문서를 내보내고, 거기서 파일은
+    ``contentMediaType`` 으로 표시된다. Swagger UI 는 필드 하나짜리 파일은 그걸
+    알아보지만 **파일 목록은 못 알아본다.** 그래서 기준 이미지 칸이 파일 선택
+    버튼이 아니라 빈 글상자로 뜨고, 그 안에 무작위 바이너리 문자열이 예시로
+    찍힌다.
+
+    3.0 시절 표기인 ``format: binary`` 를 함께 달면 Swagger UI 가 파일 여러 개를
+    고르는 칸으로 그린다. 3.1 에서도 ``format`` 은 여전히 허용되므로 문서가
+    깨지지 않는다.
+    """
+    if isinstance(node, dict):
+        if node.get("contentMediaType") == "application/octet-stream":
+            node["format"] = "binary"
+        for value in node.values():
+            _mark_binary(value)
+    elif isinstance(node, list):
+        for value in node:
+            _mark_binary(value)
+
+
+def custom_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title, version=app.version, routes=app.routes
+    )
+    _mark_binary(schema.get("components", {}))
+    app.openapi_schema = schema
+    return schema
+
 
 # ---------------------------------------------------------------------------
 # 판독 결과 이미지 임시 보관
@@ -337,3 +373,6 @@ def get_image(token: str, kind: str) -> Response:
         raise HTTPException(404, f"이 판독에는 {kind} 이미지가 없다")
 
     return Response(content=frame, media_type="image/png")
+
+
+app.openapi = custom_openapi  # type: ignore[method-assign]

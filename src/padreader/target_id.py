@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 from .config import TargetIdConfig
-from .glyphs import digit_templates, find_font
+from .glyphs import digit_templates, find_fonts
 from .rectify import crop
 from .result import TargetIdStatus
 from .spec import PadSpec
@@ -32,6 +32,18 @@ MIN_COMPONENT_HEIGHT_RATIO = 0.35
 
 MAX_COMPONENT_WIDTH_RATIO = 0.6
 """박스 너비 대비 이보다 넓으면 숫자가 아니라 붙어버린 덩어리다."""
+
+MIN_COMPONENT_ASPECT = 0.15
+"""높이 대비 이보다 홀쭉하면 숫자가 아니다.
+
+번호 영역 가장자리에 이웃 인쇄물이 걸리면 세로로 긴 조각이 들어와 숫자 하나로
+세어진다. 실촬영에서 폭 3px, 높이 54px(종횡비 0.06) 짜리 조각이 앞에 붙어
+1086 이 21986 으로 읽혔다. 실제 숫자는 가장 홀쭉한 1 도 0.44 였으므로 이
+선으로 갈린다.
+
+가장자리에 닿았는지로 거르지는 않는다. 정합이 조금만 커도 멀쩡한 숫자가
+가장자리에 닿는데, 실촬영에서 legacy 패드의 네 자리 중 셋이 그랬다.
+"""
 
 
 def _binarize(patch: np.ndarray, tone: str) -> np.ndarray:
@@ -52,6 +64,8 @@ def _components(binary: np.ndarray) -> list[tuple[int, int, int, int]]:
         if h < height * MIN_COMPONENT_HEIGHT_RATIO:
             continue
         if w > width * MAX_COMPONENT_WIDTH_RATIO:
+            continue
+        if w < h * MIN_COMPONENT_ASPECT:
             continue
         if area < 8:
             continue
@@ -112,24 +126,45 @@ def read_target_id(
     if cfg.digits is not None and len(boxes) != cfg.digits:
         return None, TargetIdStatus.FAILED, None
 
-    font_path = find_font(cfg.font_dir)
-    templates = {
-        digit: _fit(glyph)
-        for digit, glyph in digit_templates(TEMPLATE_HEIGHT, font_path).items()
-    }
+    candidates = [_fit(binary[y : y + h, x : x + w]) for x, y, w, h in boxes]
 
-    digits: list[str] = []
-    scores: list[float] = []
-    for x, y, w, h in boxes:
-        candidate = _fit(binary[y : y + h, x : x + w])
-        best_digit, best_score = max(
-            ((d, _correlate(candidate, t)) for d, t in templates.items()),
-            key=lambda pair: pair[1],
-        )
-        digits.append(best_digit)
-        scores.append(best_score)
+    # 폰트를 하나로 못 박지 않는다. 현장에 서로 다른 폰트로 인쇄된 패드가
+    # 섞여 있을 수 있어서다 — 도안 생성기가 돌아간 장비에 어떤 폰트가 깔려
+    # 있었느냐에 따라 같은 도안도 다른 글꼴로 찍힌다. 하나로 정하면 그 종류만
+    # 잘 읽히고 나머지는 오히려 못 읽게 된다.
+    #
+    # 폰트마다 전체를 읽어 보고 **자리별 상관의 평균이 가장 높은** 폰트를
+    # 고른다. 자리마다 다른 폰트를 섞지 않는 이유는, 한 패드는 한 폰트로
+    # 인쇄되었을 것이고 섞으면 아무 글자에나 억지로 맞춘 답이 나오기 때문이다.
+    #
+    # 고를 때 최소값을 쓰지 않는다. 분진에 덮인 한 자리가 폰트 선택을 좌우해
+    # 버리기 때문이다. 실촬영에서 분진이 많이 쌓인 사진의 정답 폰트가 평균
+    # 0.716 인데 최소 0.518 이라, 최소 0.584 인 엉뚱한 폰트에 밀려 한 자리를
+    # 틀리게 읽었다. 네 자리 전부를 근거로 삼는 편이 '이 패드가 어느 폰트로
+    # 인쇄되었나' 를 더 잘 가른다.
+    best: tuple[float, float, str] | None = None
+    for font_path in [*find_fonts(cfg.font_dir), None]:
+        templates = {
+            digit: _fit(glyph)
+            for digit, glyph in digit_templates(TEMPLATE_HEIGHT, font_path).items()
+        }
+        digits: list[str] = []
+        scores: list[float] = []
+        for candidate in candidates:
+            digit, score = max(
+                ((d, _correlate(candidate, t)) for d, t in templates.items()),
+                key=lambda pair: pair[1],
+            )
+            digits.append(digit)
+            scores.append(score)
 
-    # 신뢰도는 가장 약한 자리를 따른다. 한 자리만 틀려도 ID 전체가 틀리므로
-    # 평균으로 뭉개면 안 된다.
-    confidence = float(min(scores))
-    return "".join(digits), TargetIdStatus.OK, confidence
+        # 신뢰도로 내보내는 값은 여전히 가장 약한 자리다. 한 자리만 틀려도
+        # ID 전체가 틀리므로, 상위 계층이 믿을지 말지 볼 때는 평균으로
+        # 뭉개면 안 된다. 폰트를 고르는 기준과 신뢰도를 내는 기준이 다르다.
+        fit = float(np.mean(scores))
+        if best is None or fit > best[0]:
+            best = (fit, float(min(scores)), "".join(digits))
+
+    if best is None:
+        return None, TargetIdStatus.FAILED, None
+    return best[2], TargetIdStatus.OK, best[1]

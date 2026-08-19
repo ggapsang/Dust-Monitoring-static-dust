@@ -29,22 +29,30 @@ FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
 """폰트로 볼 확장자. Pillow 이 읽을 수 있는 것들이다."""
 
 
-def find_font(font_dir: str | None) -> str | None:
-    """폴더에서 쓸 폰트 파일 하나를 고른다. 없으면 ``None``.
+def find_fonts(font_dir: str | None) -> list[str]:
+    """폴더의 폰트 파일 전부. 이름 순.
 
-    여러 개가 있으면 이름 순으로 첫 번째다. 둘 중 무엇이 쓰였는지 모르는
-    상태가 되지 않도록, 폴더에는 실제 인쇄에 쓴 폰트 하나만 두는 것을
-    전제로 한다.
+    하나만 고르지 않는다. 현장에 서로 다른 폰트로 인쇄된 패드가 섞여 있을 수
+    있기 때문이다 — 도안을 만든 장비에 어떤 폰트가 깔려 있었느냐에 따라 같은
+    생성기가 다른 글꼴로 찍는다. 폰트를 하나로 못 박으면 그 한 종류만 잘
+    읽히고 나머지는 오히려 나빠진다.
     """
     if not font_dir:
-        return None
+        return []
     folder = Path(font_dir)
     if not folder.is_dir():
-        return None
-    files = sorted(
-        p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in FONT_SUFFIXES
-    )
-    return str(files[0]) if files else None
+        return []
+    return [
+        str(p)
+        for p in sorted(folder.iterdir())
+        if p.is_file() and p.suffix.lower() in FONT_SUFFIXES
+    ]
+
+
+def find_font(font_dir: str | None) -> str | None:
+    """폴더의 첫 번째 폰트. 진단용."""
+    found = find_fonts(font_dir)
+    return found[0] if found else None
 
 
 def _render_pillow(text: str, height_px: int, font_path: str) -> np.ndarray | None:
