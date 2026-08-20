@@ -88,6 +88,7 @@ class Run(Base):
     total_captures: Mapped[int] = mapped_column(Integer)
     done_captures: Mapped[int] = mapped_column(Integer)
     notes: Mapped[list[Any]] = mapped_column(JSONB)
+    ignore_baseline_window: Mapped[bool] = mapped_column(Boolean)
 
 
 class Reading(Base):

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from . import naming, storage
@@ -83,7 +83,22 @@ def patch_target(
     row = session.get(Target, target_id)
     if row is None:
         raise HTTPException(404, f"등록되지 않은 촬영 단위다: {target_id}")
-    for field, value in body.model_dump(exclude_unset=True).items():
+
+    changes = body.model_dump(exclude_unset=True)
+    renamed = changes.pop("target_id", None)
+    if renamed and renamed != target_id:
+        if session.get(Target, renamed) is not None:
+            raise HTTPException(409, f"이미 쓰고 있는 촬영 단위 번호다: {renamed}")
+        # 자식 행은 외래키의 ON UPDATE CASCADE 가 따라온다. 지웠다 다시
+        # 넣으면 그 촬영 단위의 사진과 개소가 통째로 끊긴다.
+        session.execute(
+            update(Target).where(Target.target_id == target_id).values(target_id=renamed)
+        )
+        session.commit()
+        target_id = renamed
+        row = session.get(Target, target_id)
+
+    for field, value in changes.items():
         setattr(row, field, value)
     session.commit()
     count = session.execute(
@@ -179,9 +194,28 @@ def patch_point(
     row = session.get(Point, point_id)
     if row is None:
         raise HTTPException(404, f"등록되지 않은 개소다: {point_id}")
+
     changes = body.model_dump(exclude_unset=True)
     if changes.get("target_id") and session.get(Target, changes["target_id"]) is None:
         raise HTTPException(400, f"등록되지 않은 촬영 단위다: {changes['target_id']}")
+
+    renamed = changes.pop("point_id", None)
+    if renamed and renamed != point_id:
+        if session.get(Point, renamed) is not None:
+            raise HTTPException(409, f"이미 쓰고 있는 개소 번호다: {renamed}")
+        # 기준 사진과 판독 이력은 외래키의 ON UPDATE CASCADE 가 따라온다.
+        # 지웠다 다시 넣으면 그 개소의 판독 이력이 통째로 끊긴다.
+        #
+        # 저장된 기준 사진의 폴더 이름은 옛 번호 그대로 남는다. 경로는 DB 에
+        # 있는 것을 그대로 쓰므로 파일은 계속 열린다 - 폴더 이름을 맞추자고
+        # 파일을 옮기면, 옮기다 실패했을 때 DB 와 디스크가 어긋난다.
+        session.execute(
+            update(Point).where(Point.point_id == point_id).values(point_id=renamed)
+        )
+        session.commit()
+        point_id = renamed
+        row = session.get(Point, point_id)
+
     for field, value in changes.items():
         setattr(row, field, value)
     session.commit()
@@ -372,7 +406,7 @@ def parse_names(
                     ParsedUpload(
                         filename=name,
                         parsed=False,
-                        message="B_<POINT_ID>_<YYMMDD>_<HHMM>_r<n> 형식이 아니다",
+                        message="B_<POINT_ID>_<날짜>_<HHMM>_r<n> 형식이 아니다",
                     )
                 )
                 continue
@@ -396,7 +430,7 @@ def parse_names(
                 ParsedUpload(
                     filename=name,
                     parsed=False,
-                    message="C_<TARGET_ID>_<YYMMDD>_<HHMM>_<nn> 형식이 아니다",
+                    message="C_<TARGET_ID>_<날짜>_<HHMM>_<nn> 형식이 아니다",
                 )
             )
             continue

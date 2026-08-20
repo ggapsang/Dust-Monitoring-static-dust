@@ -8,8 +8,10 @@
 줄이는 수단일 뿐이다. 그래서 실패해도 거부하지 않는다 - 해당 사진만
 사람이 지정하도록 표시한다.
 
-    판독 사진   C_<TARGET_ID>_<YYMMDD>_<HHMM>_<nn>.jpg
-    기준 사진   B_<POINT_ID>_<YYMMDD>_<HHMM>_r<n>.jpg
+    판독 사진   C_<TARGET_ID>_<날짜>_<HHMM>_<nn>.jpg
+    기준 사진   B_<POINT_ID>_<날짜>_<HHMM>_r<n>.jpg
+
+날짜는 ``YYMMDD`` 와 ``YYYYMMDD`` 를 모두 받는다.
 
 구분자는 ``_`` 고정이고 필드 안에 ``_`` 를 쓰지 않는다.
 """
@@ -23,11 +25,14 @@ from datetime import datetime, timedelta, timezone
 KST = timezone(timedelta(hours=9))
 """사람이 파일명에 적는 시각의 시간대."""
 
+# 날짜는 6자리(YYMMDD)와 8자리(YYYYMMDD)를 모두 받는다. 규칙은 6자리로
+# 적어 두었지만 사람은 네 자리 연도를 자연스럽게 쓴다. 자릿수로 갈리므로
+# 둘을 함께 받아도 모호해지지 않는다.
 CAPTURE_RE = re.compile(
-    r"^C_(?P<id>[^_]+)_(?P<date>\d{6})_(?P<time>\d{4})_(?P<seq>\d+)$"
+    r"^C_(?P<id>[^_]+)_(?P<date>\d{8}|\d{6})_(?P<time>\d{4})_(?P<seq>\d+)$"
 )
 BASELINE_RE = re.compile(
-    r"^B_(?P<id>[^_]+)_(?P<date>\d{6})_(?P<time>\d{4})_r(?P<rev>\d+)$"
+    r"^B_(?P<id>[^_]+)_(?P<date>\d{8}|\d{6})_(?P<time>\d{4})_r(?P<rev>\d+)$"
 )
 
 
@@ -57,7 +62,8 @@ def _stamp(date: str, time: str) -> datetime:
     사람이 붙이는 값이라 현지 시각(KST)으로 읽고 UTC 로 바꿔 저장한다. DB 를
     UTC 로 통일해야 나중에 시간대가 섞였을 때 값 자체는 흔들리지 않는다.
     """
-    naive = datetime.strptime(date + time, "%y%m%d%H%M")
+    fmt = "%Y%m%d%H%M" if len(date) == 8 else "%y%m%d%H%M"
+    naive = datetime.strptime(date + time, fmt)
     return naive.replace(tzinfo=KST).astimezone(timezone.utc)
 
 

@@ -45,7 +45,8 @@ async def create_run(
         Form(
             description=(
                 "사진마다의 촬영 단위. JSON 배열이며 files 와 순서가 같다. "
-                '비워 두면 파일명에서 읽는다. 예: ["T0042","T0043"]'
+                '예: ["T0042","T0043"]. 비워 두면 파일명이 규칙을 따를 때에 한해 '
+                "거기서 읽는다 - 규칙은 손입력을 줄이는 수단일 뿐이라 안 지켜도 된다."
             )
         ),
     ] = "",
@@ -56,6 +57,17 @@ async def create_run(
     config_override: Annotated[
         str, Form(description="설정 일부 덮어쓰기(JSON 객체). 비우면 서버 설정 그대로")
     ] = "",
+    ignore_baseline_window: Annotated[
+        bool,
+        Form(
+            description=(
+                "기준 사진의 등록 시점을 대조하지 않는다. 켜면 촬영 일시와 무관하게 "
+                "그 개소의 가장 나중 기준을 쓴다. **얻은 값이 부착 이후 쌓인 양이 "
+                "아닐 수 있다** - 촬영보다 나중에 붙인 패드를 기준으로 삼으면 그 "
+                "사이의 침착이 빠진다."
+            )
+        ),
+    ] = False,
 ) -> RunOut:
     if not files:
         raise HTTPException(400, "사진이 없다")
@@ -73,8 +85,7 @@ async def create_run(
         if not target_id:
             raise HTTPException(
                 400,
-                f"{upload.filename!r} 의 촬영 단위를 알 수 없다. "
-                "파일명이 C_<TARGET_ID>_<YYMMDD>_<HHMM>_<nn> 형식이 아니면 "
+                f"{upload.filename!r} 의 촬영 단위를 지정하지 않았다. "
                 "target_ids 에 값을 넣는다.",
             )
         if moment is None:
@@ -115,6 +126,7 @@ async def create_run(
         total_captures=len(capture_ids),
         done_captures=0,
         notes=[],
+        ignore_baseline_window=ignore_baseline_window,
     )
     session.add(run)
     session.commit()
@@ -251,6 +263,13 @@ async def _spawn_rerun(
     if not isinstance(overrides, dict):
         raise HTTPException(400, "config_override 는 JSON 객체여야 한다")
 
+    # 안 주면 원본 실행을 따른다. 재판독은 설정만 바꿔 견주는 것이라 나머지
+    # 조건이 말없이 달라지면 두 값을 비교할 수 없다.
+    source = session.get(Run, source_run_id) if source_run_id else None
+    ignore_window = (body or {}).get("ignore_baseline_window")
+    if ignore_window is None:
+        ignore_window = bool(source.ignore_baseline_window) if source else False
+
     run = Run(
         executed_at=datetime.now(timezone.utc),
         config_override=overrides,
@@ -260,6 +279,7 @@ async def _spawn_rerun(
         total_captures=len(capture_ids),
         done_captures=0,
         notes=[],
+        ignore_baseline_window=bool(ignore_window),
     )
     session.add(run)
     session.commit()
@@ -292,6 +312,7 @@ def _run_out(session: Session, row: Run) -> RunOut:
         done_captures=row.done_captures,
         notes=row.notes or [],
         reading_count=count,
+        ignore_baseline_window=bool(row.ignore_baseline_window),
     )
 
 

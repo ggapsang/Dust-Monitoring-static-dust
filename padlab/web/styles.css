@@ -206,6 +206,8 @@ tbody tr { background: var(--bg-surface); }
 tbody tr:hover { background: var(--bg-hover); }
 tbody tr.sel { background: var(--bg-selected); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* 오른쪽 정렬 숫자 열 바로 뒤에 오는 열은 붙어 보인다. 그 사이를 벌린다. */
+td.apart, th.apart { padding-left: 32px; }
 /* 오독이 치명적인 값은 Medium 이상으로 낸다. */
 td.key { font-weight: 500; }
 
@@ -256,9 +258,78 @@ svg.chart .dot { fill: var(--accent-fill); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 
+/* 등록 트리.
+ *
+ * 명칭과 위치 설명을 한 줄에 이어 붙이면 어디까지가 이름이고 어디부터가
+ * 설명인지 읽는 사람이 가를 수 없다. 열로 나누고 머리글을 붙인다. */
 .tree { list-style: none; padding: 0; margin: 0; }
-.tree > li { border-bottom: 1px solid var(--border-divider); padding: 10px 0; }
-.tree ul { list-style: none; margin: 8px 0 0; padding-left: 20px; }
-.tree ul li { padding: 4px 0; font-size: 14px; color: var(--text-secondary); display: flex; gap: 8px; align-items: center; }
+.tree > li { border-top: 1px solid var(--border-divider); padding: 16px 0 8px; }
+.tree > li:first-child { border-top: 0; padding-top: 0; }
+
+.tgrid {
+  display: grid;
+  grid-template-columns: 9rem 13rem minmax(0, 1fr) 8rem;
+  gap: 0 24px; align-items: center;
+}
+/* 촬영 단위 행과 개소 행의 수정·삭제가 같은 세로선에 놓이게 한다.
+ *
+ * 둘은 서로 다른 상자에 들어 있다 - 하나는 그리드의 마지막 칸, 하나는 표의
+ * 마지막 열이다. 폭을 같게 두고 오른쪽 여백을 양쪽 다 없애야 버튼이 한 줄로
+ * 선다. 표의 셀 여백(10px)만 남아도 그만큼 어긋나 보인다. */
+.acts { display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
+/* 셀 자체에 flex 를 주면 표의 열 모델에서 빠져 머리글과 어긋난다. 셀은
+   그대로 두고 안쪽 상자를 정렬한다. */
+.tree table td.actcell,
+.tree table th.actcell { width: 8rem; padding-right: 0; }
+.tgrid input, .tgrid select { width: 100%; }
+.tgrid.editing { align-items: end; }
+.tgrid.head {
+  font-size: 12px; line-height: 16px; color: var(--text-tertiary);
+  padding-bottom: 8px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-divider);
+}
+/* 식별자는 오독이 치명적이라 본문색 + Medium 으로 낸다. */
+.tid { font-weight: 500; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tname { color: var(--text-primary); font-size: 14px; }
+.tdesc { color: var(--text-secondary); font-size: 14px; }
+.tnone { color: var(--text-tertiary); font-size: 14px; }
+
+.tree table { margin: 12px 0 0; }
+.tree table th { position: static; background: transparent; border-bottom: 1px solid var(--border-divider); }
+.tree table td { padding: 6px 10px; }
+.tree table td.actcell { white-space: nowrap; }
+.tree table input, .tree table select { width: 100%; min-width: 6rem; }
+button.tiny { padding: 4px 10px; font-size: 12px; line-height: 16px; }
+.tree table tbody tr { background: transparent; }
+.tree table tbody tr:hover { background: var(--bg-hover); }
+.tree .indent { padding-left: 24px; border-left: 2px solid var(--border-divider); margin-left: 4px; }
 
 .empty { padding: 40px; text-align: center; color: var(--text-tertiary); font-size: 14px; }
+
+/* ── 열 메뉴 ──────────────────────────────────────────────── */
+
+/* 엑셀처럼 열 이름을 눌러 그 열에서 정렬하고 값을 고른다. 거르는 일과
+   정렬하는 일이 같은 자리에 있어야 어느 열을 건드리는지 헷갈리지 않는다. */
+th .mark { margin-left: 4px; font-size: 10px; color: var(--text-brand); }
+th.picked { color: var(--text-brand); }
+
+.colmenu {
+  position: absolute; z-index: 30;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-divider);
+  box-shadow: var(--shadow-3);
+  border-radius: 8px; padding: 8px; min-width: 15rem; max-width: 22rem;
+}
+.colmenu .sect { max-height: 14rem; overflow: auto; margin-top: 4px; }
+.colmenu .opt {
+  display: flex; gap: 8px; align-items: center;
+  padding: 6px 8px; border-radius: 4px;
+  font-size: 14px; line-height: 20px; color: var(--text-primary);
+  cursor: pointer; white-space: nowrap;
+}
+.colmenu .opt:hover { background: var(--bg-hover); }
+.colmenu .opt input { margin: 0; }
+.colmenu hr { border: 0; border-top: 1px solid var(--border-divider); margin: 8px 0; }
+.colmenu .foot { display: flex; gap: 4px; justify-content: space-between; margin-top: 8px; }
+.colmenu input[type="text"], .colmenu input[type="number"] { width: 100%; }
+.colmenu .range { display: flex; gap: 8px; }

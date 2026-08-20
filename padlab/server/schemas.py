@@ -26,6 +26,10 @@ class TargetIn(BaseModel):
 
 
 class TargetPatch(BaseModel):
+    target_id: str | None = Field(
+        default=None,
+        description="촬영 단위 번호 자체를 바꿀 때만 넣는다. 속한 개소와 사진이 따라온다",
+    )
     name: str | None = None
     location_desc: str | None = None
     note: str | None = None
@@ -52,6 +56,13 @@ class PointIn(BaseModel):
 
 
 class PointPatch(BaseModel):
+    point_id: str | None = Field(
+        default=None,
+        description=(
+            "개소 번호 자체를 바꿀 때만 넣는다. 기준 사진과 판독 이력이 따라온다. "
+            "판독기가 읽어 낸 번호(read_point_id)는 그때 값 그대로 남는다."
+        ),
+    )
     target_id: str | None = None
     name: str | None = None
     location_desc: str | None = None
@@ -119,6 +130,9 @@ class RunOut(BaseModel):
     done_captures: int = 0
     notes: list[dict[str, Any]] = []
     reading_count: int = 0
+    ignore_baseline_window: bool = Field(
+        default=False, description="기준 사진의 등록 시점을 대조하지 않고 돌렸는지"
+    )
 
 
 class ReadingOut(BaseModel):

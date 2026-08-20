@@ -13,10 +13,17 @@ const state = {
   points: [],
   readings: [],
   selected: new Set(),
-  order: 'captured_at',
-  desc: true,
+  // 열마다의 필터와 정렬. 엑셀처럼 열 이름을 눌러 정한다.
+  colFilters: {},
+  // 정렬 키를 순서대로 담는다. 앞의 것이 우선이고, 값이 같을 때 뒤의 것으로
+  // 가른다. 하나만 담으면 단일 정렬과 같다.
+  sort: [{ key: 'captured_at', desc: true }],
+  menu: null,
   uploads: [],
   poll: null,
+  // 등록 화면에서 지금 고치고 있는 행. {kind, id} 하나만 둔다 - 여러 행을
+  // 동시에 열어 두면 어느 것을 저장하는지 헷갈린다.
+  edit: null,
 };
 
 // ── 통신 ────────────────────────────────────────────────────────────
@@ -63,15 +70,52 @@ function route() {
 window.addEventListener('hashchange', route);
 
 // ── 결과 스프레드시트 ───────────────────────────────────────────────
+//
+// 열 정의를 한 곳에 모은다. 머리글과 본문을 따로 적으면 열을 하나 넣고
+// 빼는 순간 둘이 어긋나고, 그러면 값이 엉뚱한 칸에 실려 보인다.
+//
+// 거르기와 정렬은 받아 온 목록 안에서 한다. 서버로 매번 다시 물으면 열을
+// 누를 때마다 기다려야 하고, 실증 규모에서는 그럴 이유가 없다. 기간만
+// 서버에 넘겨 가져올 범위를 정한다.
 
+const COLUMNS = [
+  { key: 'captured_at', label: '촬영 일시', kind: 'date',
+    face: (r) => (r.captured_at || '').slice(0, 10),
+    cell: (r) => stamp(r.captured_at) },
+  { key: 'target_id', label: 'TARGET_ID', kind: 'text' },
+  { key: 'point_id', label: '개소', kind: 'text', cls: 'key' },
+  { key: 'sequence', label: '회차', kind: 'num', digits: 0 },
+  { key: 'status', label: '상태', kind: 'text',
+    get: (r) => (r.success ? '성공' : (r.failure_reason || '실패')),
+    cell: (r) => (r.success
+      ? '<span class="badge ok"><i class="dot"></i>성공</span>'
+      : `<span class="badge bad" title="${escape(r.summary)}"><i class="dot"></i>${escape(r.failure_reason || '실패')}</span>`) },
+  { key: 'score_uniform', label: 'uniform', kind: 'num', digits: 3 },
+  { key: 'score_localized', label: 'localized', kind: 'num', digits: 3 },
+  { key: 'score_combined', label: 'total', kind: 'num', digits: 3, cls: 'key' },
+  { key: 'quality_sharpness', label: '선명도', kind: 'num', digits: 4 },
+  { key: 'quality_saturated_ratio', label: '포화', kind: 'num', digits: 4 },
+  { key: 'quality_pad_size_px', label: '패드 크기', kind: 'num', digits: 1 },
+  { key: 'quality_pad_size_diff_ratio', label: '크기 차이', kind: 'num', digits: 4 },
+  { key: 'read_point_id', label: '판독 번호', kind: 'text',
+    cell: (r) => `${escape(r.read_point_id || '—')}${r.read_point_id && r.point_id && r.read_point_id !== r.point_id
+      ? ' <span class="badge warn" title="판독 번호가 짝지어진 개소와 다르다"><i class="dot"></i>불일치</span>' : ''}` },
+  { key: 'elapsed_ms', label: '처리(ms)', kind: 'num', digits: 0 },
+  { key: 'run_kind', label: '실행', kind: 'text',
+    get: (r) => (r.run_kind === 'rerun' ? '재판독' : '최초'),
+    cell: (r) => `${r.run_kind === 'rerun' ? '<span class="badge info"><i class="dot"></i>재판독</span>' : '최초'}${r.has_override ? ' <span class="badge info"><i class="dot"></i>설정</span>' : ''}` },
+];
+
+const raw = (column, row) => (column.get ? column.get(row) : row[column.key]);
+const face = (column, row) => {
+  if (column.face) return column.face(row);
+  const value = raw(column, row);
+  return value === null || value === undefined || value === '' ? '' : String(value);
+};
+
+/** 기간만 서버에 넘긴다. 나머지는 받아 온 목록 안에서 거른다. */
 function query() {
   const params = new URLSearchParams();
-  const put = (key, value) => { if (value) params.set(key, value); };
-  put('target_id', $('#f-target').value);
-  put('point_id', $('#f-point').value);
-  put('success', $('#f-success').value);
-  put('failure_reason', $('#f-reason').value);
-  put('run_kind', $('#f-kind').value);
   if ($('#f-since').value) params.set('since', `${$('#f-since').value}T00:00:00`);
   if ($('#f-until').value) params.set('until', `${$('#f-until').value}T23:59:59`);
   return params;
@@ -79,68 +123,231 @@ function query() {
 
 async function loadReadings() {
   const params = query();
-  params.set('order', state.order);
-  params.set('desc', String(state.desc));
+  params.set('limit', '5000');
   state.readings = await api(`/api/readings?${params}`);
   drawReadings();
-  fillReasons();
+}
+
+/** 열 필터를 통과한 행. 정렬까지 마친 것이다. */
+function visibleRows() {
+  let rows = state.readings.filter((row) =>
+    COLUMNS.every((column) => {
+      const rule = state.colFilters[column.key];
+      if (!rule) return true;
+      if (rule.values) return rule.values.has(face(column, row));
+      const value = raw(column, row);
+      if (value === null || value === undefined) return false;
+      if (rule.min !== null && Number(value) < rule.min) return false;
+      if (rule.max !== null && Number(value) > rule.max) return false;
+      return true;
+    }));
+
+  if (state.sort.length) {
+    rows = [...rows].sort((left, right) => {
+      for (const key of state.sort) {
+        const column = COLUMNS.find((c) => c.key === key.key);
+        if (!column) continue;
+        const diff = compare(column, raw(column, left), raw(column, right), key.desc);
+        if (diff) return diff;
+      }
+      return 0;
+    });
+  }
+  return rows;
+}
+
+/** 값 두 개의 앞뒤. 같으면 0 이라 다음 정렬 키로 넘어간다. */
+function compare(column, x, y, desc) {
+  const blank = (v) => v === null || v === undefined || v === '';
+  // 빈 값은 방향과 무관하게 뒤로 보낸다. 섞여 들어오면 정렬한 의미가 없다.
+  if (blank(x) && blank(y)) return 0;
+  if (blank(x)) return 1;
+  if (blank(y)) return -1;
+  const diff = column.kind === 'num'
+    ? Number(x) - Number(y)
+    : String(x).localeCompare(String(y), 'ko');
+  return desc ? -diff : diff;
 }
 
 function drawReadings() {
-  const body = $('#t-readings tbody');
-  body.innerHTML = state.readings.map((row) => {
-    const badge = row.success
-      ? '<span class="badge ok"><i class="dot"></i>성공</span>'
-      : `<span class="badge bad" title="${escape(row.summary)}"><i class="dot"></i>${escape(row.failure_reason || '실패')}</span>`;
-    const mark = row.read_point_id && row.point_id && row.read_point_id !== row.point_id
-      ? ' <span class="badge warn" title="판독 번호가 짝지어진 개소와 다르다"><i class="dot"></i>불일치</span>'
-      : '';
-    return `<tr data-id="${row.id}" class="${state.selected.has(row.id) ? 'sel' : ''}">
-      <td><input type="checkbox" data-pick="${row.id}" ${state.selected.has(row.id) ? 'checked' : ''}></td>
-      <td>${stamp(row.captured_at)}</td>
-      <td>${escape(row.target_id)}</td>
-      <td class="key">${escape(row.point_id || '—')}</td>
-      <td class="num">${row.sequence ?? '—'}</td>
-      <td>${badge}</td>
-      <td class="num">${num(row.score_uniform)}</td>
-      <td class="num">${num(row.score_localized)}</td>
-      <td class="num key">${num(row.score_combined)}</td>
-      <td class="num">${num(row.quality_sharpness, 4)}</td>
-      <td class="num">${num(row.quality_saturated_ratio, 4)}</td>
-      <td class="num">${num(row.quality_pad_size_px, 1)}</td>
-      <td class="num">${num(row.quality_pad_size_diff_ratio, 4)}</td>
-      <td>${escape(row.read_point_id || '—')}${mark}</td>
-      <td class="num">${num(row.elapsed_ms, 0)}</td>
-      <td>${row.run_kind === 'rerun' ? '<span class="badge info"><i class="dot"></i>재판독</span>' : '최초'}${row.has_override ? ' <span class="badge info"><i class="dot"></i>설정</span>' : ''}</td>
-    </tr>`;
+  $('#t-head').innerHTML = '<th class="plain"></th>' + COLUMNS.map((column) => {
+    const rank = state.sort.findIndex((k) => k.key === column.key);
+    const filtered = Boolean(state.colFilters[column.key]);
+    // 정렬이 둘 이상이면 순번을 같이 낸다. 무엇이 먼저인지 안 보이면 왜 이
+    // 순서로 늘어섰는지 알 수 없다.
+    const mark = `${rank < 0 ? '' : (state.sort[rank].desc ? '▼' : '▲')
+      + (state.sort.length > 1 ? rank + 1 : '')}${filtered ? '●' : ''}`;
+    return `<th class="${column.kind === 'num' ? 'num ' : ''}${rank >= 0 || filtered ? 'picked' : ''}"
+      data-col="${column.key}">${escape(column.label)}<span class="mark">${mark}</span></th>`;
   }).join('');
 
+  const rows = visibleRows();
+  $('#t-readings tbody').innerHTML = rows.map((row) => `<tr data-id="${row.id}" class="${state.selected.has(row.id) ? 'sel' : ''}">
+      <td><input type="checkbox" data-pick="${row.id}" ${state.selected.has(row.id) ? 'checked' : ''}></td>
+      ${COLUMNS.map((column) => {
+        const body = column.cell
+          ? column.cell(row)
+          : (column.kind === 'num' ? num(raw(column, row), column.digits) : escape(face(column, row) || '—'));
+        return `<td class="${column.kind === 'num' ? 'num ' : ''}${column.cls || ''}">${body}</td>`;
+      }).join('')}
+    </tr>`).join('');
+
+  const hidden = state.readings.length - rows.length;
+  const order = state.sort
+    .map((key) => {
+      const column = COLUMNS.find((c) => c.key === key.key);
+      return column ? `${column.label} ${key.desc ? '▼' : '▲'}` : '';
+    })
+    .filter(Boolean)
+    .join(' → ');
+  $('#f-count').textContent = state.readings.length
+    ? `${rows.length}건${hidden ? ` (필터로 ${hidden}건 숨김)` : ''}${order ? ` · 정렬 ${order}` : ''}`
+    : '';
   $('#results-empty').style.display = state.readings.length ? 'none' : 'block';
   $('#f-rerun').disabled = state.selected.size === 0;
 
-  $$('#t-readings tbody tr').forEach((tr) => {
-    tr.addEventListener('click', (event) => {
-      if (event.target.dataset.pick) return;
-      openDetail(Number(tr.dataset.id));
+  $$('#t-readings tbody tr').forEach((tr) => tr.addEventListener('click', (event) => {
+    if (event.target.dataset.pick) return;
+    openDetail(Number(tr.dataset.id));
+  }));
+  $$('[data-pick]').forEach((box) => box.addEventListener('change', () => {
+    const id = Number(box.dataset.pick);
+    box.checked ? state.selected.add(id) : state.selected.delete(id);
+    box.closest('tr').classList.toggle('sel', box.checked);
+    $('#f-rerun').disabled = state.selected.size === 0;
+  }));
+  $$('#t-head th[data-col]').forEach((th) => th.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openColumnMenu(th, COLUMNS.find((c) => c.key === th.dataset.col));
+  }));
+}
+
+/** 열 하나의 정렬·필터 메뉴. 한 번에 하나만 떠 있다. */
+function openColumnMenu(th, column) {
+  closeColumnMenu();
+  const menu = document.createElement('div');
+  menu.className = 'colmenu';
+
+  const rule = state.colFilters[column.key];
+  const body = column.kind === 'num'
+    ? `<div class="range">
+         <label class="field">이상<input type="number" step="any" data-min value="${rule && rule.min !== null ? rule.min : ''}"></label>
+         <label class="field">이하<input type="number" step="any" data-max value="${rule && rule.max !== null ? rule.max : ''}"></label>
+       </div>`
+    : (() => {
+        // 지금 화면에 있는 값만 보여 준다. 다른 열에서 이미 걸러 낸 값을
+        // 고르게 하면 아무리 눌러도 아무 행도 안 남는다.
+        const pool = state.readings.filter((row) => COLUMNS.every((other) => {
+          if (other.key === column.key) return true;
+          const r = state.colFilters[other.key];
+          if (!r) return true;
+          if (r.values) return r.values.has(face(other, row));
+          const v = raw(other, row);
+          if (v === null || v === undefined) return false;
+          return (r.min === null || Number(v) >= r.min) && (r.max === null || Number(v) <= r.max);
+        }));
+        const values = [...new Set(pool.map((row) => face(column, row)))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const on = (value) => (!rule || !rule.values || rule.values.has(value) ? 'checked' : '');
+        return `<input type="text" data-search placeholder="값 검색">
+          <div class="sect">${values.map((value) => `
+            <label class="opt"><input type="checkbox" data-value="${escape(value)}" ${on(value)}>
+              <span>${escape(value || '(빈 값)')}</span></label>`).join('')
+          || '<div class="opt muted">값이 없다</div>'}</div>`;
+      })();
+
+  const rank = state.sort.findIndex((k) => k.key === column.key);
+  menu.innerHTML = `
+    <div class="opt" data-sort-asc>오름차순 정렬</div>
+    <div class="opt" data-sort-desc>내림차순 정렬</div>
+    <div class="opt" data-add-asc>정렬에 추가 · 오름차순</div>
+    <div class="opt" data-add-desc>정렬에 추가 · 내림차순</div>
+    ${rank >= 0 ? `<div class="opt" data-unsort>이 열 정렬 해제 (지금 ${rank + 1}순위)</div>` : ''}
+    <hr>
+    ${body}
+    <div class="foot">
+      <button class="ghost tiny" data-clear>이 열 필터 해제</button>
+      <button class="primary tiny" data-apply>적용</button>
+    </div>`;
+
+  document.body.appendChild(menu);
+  const box = th.getBoundingClientRect();
+  menu.style.left = `${Math.min(box.left + window.scrollX, window.innerWidth - menu.offsetWidth - 8)}px`;
+  menu.style.top = `${box.bottom + window.scrollY + 4}px`;
+  state.menu = menu;
+
+  const search = $('[data-search]', menu);
+  if (search) {
+    search.focus();
+    search.addEventListener('input', () => {
+      const needle = search.value.trim().toLowerCase();
+      $$('.opt', menu).forEach((opt) => {
+        const box2 = $('[data-value]', opt);
+        if (!box2) return;
+        opt.style.display = box2.dataset.value.toLowerCase().includes(needle) ? '' : 'none';
+      });
     });
-  });
-  $$('[data-pick]').forEach((box) => {
-    box.addEventListener('change', () => {
-      const id = Number(box.dataset.pick);
-      box.checked ? state.selected.add(id) : state.selected.delete(id);
-      box.closest('tr').classList.toggle('sel', box.checked);
-      $('#f-rerun').disabled = state.selected.size === 0;
-    });
+  }
+
+  menu.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const target = event.target;
+    if (target.closest('[data-sort-asc]')) { state.sort = [{ key: column.key, desc: false }]; closeColumnMenu(); drawReadings(); }
+    else if (target.closest('[data-sort-desc]')) { state.sort = [{ key: column.key, desc: true }]; closeColumnMenu(); drawReadings(); }
+    else if (target.closest('[data-add-asc]')) { addSort(column.key, false); closeColumnMenu(); drawReadings(); }
+    else if (target.closest('[data-add-desc]')) { addSort(column.key, true); closeColumnMenu(); drawReadings(); }
+    else if (target.closest('[data-unsort]')) { state.sort = state.sort.filter((k) => k.key !== column.key); closeColumnMenu(); drawReadings(); }
+    else if (target.closest('[data-clear]')) { delete state.colFilters[column.key]; closeColumnMenu(); drawReadings(); }
+    else if (target.closest('[data-apply]')) { applyColumnFilter(menu, column); closeColumnMenu(); drawReadings(); }
   });
 }
 
-function fillReasons() {
-  const reasons = [...new Set(state.readings.map((r) => r.failure_reason).filter(Boolean))];
-  const select = $('#f-reason');
-  const keep = select.value;
-  select.innerHTML = '<option value="">전체</option>' +
-    reasons.map((r) => `<option value="${escape(r)}">${escape(r)}</option>`).join('');
-  select.value = keep;
+/** 정렬 키를 뒤에 붙인다. 이미 있으면 방향만 바꾸고 순번은 지킨다. */
+function addSort(key, desc) {
+  const found = state.sort.find((k) => k.key === key);
+  if (found) found.desc = desc;
+  else state.sort.push({ key, desc });
+}
+
+function applyColumnFilter(menu, column) {
+  if (column.kind === 'num') {
+    const min = $('[data-min]', menu).value;
+    const max = $('[data-max]', menu).value;
+    if (min === '' && max === '') delete state.colFilters[column.key];
+    else state.colFilters[column.key] = { min: min === '' ? null : Number(min), max: max === '' ? null : Number(max) };
+    return;
+  }
+  const boxes = $$('[data-value]', menu);
+  const picked = boxes.filter((box) => box.checked).map((box) => box.dataset.value);
+  // 전부 골랐으면 거르지 않는 것과 같다. 필터 표시를 남기지 않는다.
+  if (picked.length === boxes.length) delete state.colFilters[column.key];
+  else state.colFilters[column.key] = { values: new Set(picked) };
+}
+
+function closeColumnMenu() {
+  if (state.menu) { state.menu.remove(); state.menu = null; }
+}
+
+/** 지금 보이는 그대로 CSV 로 낸다. 화면과 파일이 다르면 어느 쪽이 맞는지 알 수 없다. */
+function exportCsv() {
+  const rows = visibleRows();
+  const line = (cells) => cells.map((cell) => {
+    const text = String(cell ?? '');
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }).join(',');
+
+  const body = [line(COLUMNS.map((c) => c.label))]
+    .concat(rows.map((row) => line(COLUMNS.map((column) =>
+      (column.kind === 'num' ? raw(column, row) : face(column, row))))))
+    .join('\r\n');
+
+  // BOM 을 붙인다. 없으면 엑셀이 한글 머리글을 깨뜨린다.
+  const blob = new Blob(['﻿' + body], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'readings.csv';
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 // ── 상세 ────────────────────────────────────────────────────────────
@@ -289,18 +496,46 @@ function histogram(data) {
 
 async function pickFiles() {
   const files = [...$('#r-files').files];
-  if (!files.length) { state.uploads = []; drawUploads(); return; }
-  const parsed = await api('/api/uploads/parse?kind=capture', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(files.map((f) => f.name)),
-  });
-  state.uploads = parsed.map((row, index) => ({
-    ...row,
-    file: files[index],
-    target_id: row.target_id || '',
-    stamp: row.stamp || '',
+  // 목록은 파일에서 바로 만든다. 파일명 파싱은 값을 미리 채워 주는 수단일
+  // 뿐이라, 규칙을 안 지켰거나 파싱이 실패해도 목록은 그대로 나와야 한다.
+  state.uploads = files.map((file) => ({
+    filename: file.name, file, target_id: '', date: '', time: '', hint: '',
   }));
+  drawUploads();
+  if (!files.length) return;
+
+  try {
+    const parsed = await api('/api/uploads/parse?kind=capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(files.map((f) => f.name)),
+    });
+    parsed.forEach((row, index) => {
+      const slot = state.uploads[index];
+      if (!slot || !row.parsed) return;
+      slot.target_id = row.known_id ? row.target_id : '';
+      if (row.stamp) {
+        const at = new Date(row.stamp);
+        const pad = (n) => String(n).padStart(2, '0');
+        slot.date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+        slot.time = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+      }
+      slot.hint = row.known_id ? '파일명에서' : (row.message || '');
+    });
+  } catch {
+    // 파싱은 편의 기능이다. 실패해도 직접 지정하면 된다.
+  }
+  drawUploads();
+}
+
+function applyToAll() {
+  const target = $('#r-all-target').value;
+  const date = $('#r-all-date').value;
+  const time = $('#r-all-time').value;
+  state.uploads.forEach((row) => {
+    if (target) row.target_id = target;
+    if (date) { row.date = date; row.time = time; }
+  });
   drawUploads();
 }
 
@@ -310,37 +545,37 @@ function drawUploads() {
     const options = state.targets
       .map((t) => `<option value="${escape(t.target_id)}" ${t.target_id === row.target_id ? 'selected' : ''}>${escape(t.target_id)}</option>`)
       .join('');
-    const badge = row.parsed && row.known_id
-      ? '<span class="badge ok"><i class="dot"></i>자동</span>'
-      : `<span class="badge warn"><i class="dot"></i>${escape(row.message || '직접 지정')}</span>`;
-    const local = row.stamp ? new Date(row.stamp).toISOString().slice(0, 16) : '';
     return `<tr>
       <td>${escape(row.filename)}</td>
       <td><select data-target="${index}"><option value="">선택</option>${options}</select></td>
-      <td><input type="datetime-local" data-stamp="${index}" value="${local}"></td>
-      <td>${badge}</td>
+      <td><input type="date" data-date="${index}" value="${escape(row.date)}"></td>
+      <td><input type="time" data-time="${index}" value="${escape(row.time)}"></td>
+      <td class="muted">${escape(row.hint)}</td>
     </tr>`;
   }).join('');
 
-  $$('[data-target]').forEach((node) => node.addEventListener('change', () => {
-    state.uploads[Number(node.dataset.target)].target_id = node.value;
-    $('#r-go').disabled = !ready();
-  }));
-  $$('[data-stamp]').forEach((node) => node.addEventListener('change', () => {
-    state.uploads[Number(node.dataset.stamp)].stamp = node.value;
-    $('#r-go').disabled = !ready();
-  }));
+  const on = (attr, field) => $$(`[data-${attr}]`).forEach((node) =>
+    node.addEventListener('change', () => {
+      state.uploads[Number(node.dataset[attr])][field] = node.value;
+      $('#r-go').disabled = !ready();
+    }));
+  on('target', 'target_id');
+  on('date', 'date');
+  on('time', 'time');
   $('#r-go').disabled = !ready();
 }
 
-const ready = () => state.uploads.length > 0 && state.uploads.every((row) => row.target_id && row.stamp);
+// 시:분은 안 채워도 된다. 비우면 그날 00시 00분이다.
+const ready = () => state.uploads.length > 0 && state.uploads.every((row) => row.target_id && row.date);
 
 async function startRun() {
   const form = new FormData();
   state.uploads.forEach((row) => form.append('files', row.file, row.filename));
   form.append('target_ids', JSON.stringify(state.uploads.map((r) => r.target_id)));
-  form.append('captured_ats', JSON.stringify(state.uploads.map((r) => r.stamp)));
+  form.append('captured_ats', JSON.stringify(
+    state.uploads.map((r) => `${r.date}T${r.time || '00:00'}`)));
   form.append('config_override', $('#r-override').value.trim());
+  form.append('ignore_baseline_window', String($('#r-ignore-window').checked));
 
   $('#r-go').disabled = true;
   try {
@@ -379,10 +614,13 @@ async function loadRuns() {
   $('#t-runs tbody').innerHTML = runs.map((run) => `<tr>
     <td>${run.id}</td><td>${stamp(run.executed_at)}</td>
     <td>${run.kind === 'rerun' ? '재판독' : '최초'}</td>
+    <td>${run.ignore_baseline_window
+      ? '<span class="badge warn"><i class="dot"></i>무시</span>'
+      : '<span class="muted">대조</span>'}</td>
     <td><span class="badge ${run.status === 'done' ? 'ok' : run.status === 'failed' ? 'bad' : 'info'}"><i class="dot"></i>${escape(run.status)}</span></td>
     <td class="num">${run.done_captures}/${run.total_captures}</td>
     <td class="num">${run.reading_count}</td>
-    <td>${(run.notes || []).length}</td>
+    <td class="apart">${(run.notes || []).length}</td>
   </tr>`).join('');
 }
 
@@ -397,8 +635,8 @@ async function loadRegistry() {
     .map((p) => `<option value="${escape(p.point_id)}">${escape(p.point_id)}${p.name ? ` · ${escape(p.name)}` : ''}</option>`).join('');
 
   $('#n-point-target').innerHTML = targetOptions;
-  $('#f-target').innerHTML = '<option value="">전체</option>' + targetOptions;
-  ['#f-point', '#x-point'].forEach((sel) => { $(sel).innerHTML = '<option value="">전체</option>' + pointOptions; });
+  $('#r-all-target').innerHTML = '<option value="">선택</option>' + targetOptions;
+  $('#x-point').innerHTML = '<option value="">전체</option>' + pointOptions;
   ['#d-point', '#s-point'].forEach((sel) => { $(sel).innerHTML = '<option value="">선택</option>' + pointOptions; });
   $('#b-point').innerHTML = '<option value="">파일명에서</option>' + pointOptions;
 
@@ -406,26 +644,83 @@ async function loadRegistry() {
   const byPoint = {};
   baselines.forEach((b) => { (byPoint[b.point_id] ||= []).push(b); });
 
+  const cell = (value) => (value ? escape(value) : '<span class="tnone">—</span>');
+  const editing = (kind, id) => state.edit && state.edit.kind === kind && state.edit.id === id;
+  const attr = (value) => escape(value ?? '');
+
+  const targetRow = (target) => editing('target', target.target_id)
+    ? `<div class="tgrid editing">
+        <label class="field">TARGET_ID<input data-f="target_id" value="${attr(target.target_id)}"></label>
+        <label class="field">명칭<input data-f="name" value="${attr(target.name)}"></label>
+        <label class="field">촬영 위치 설명<input data-f="location_desc" value="${attr(target.location_desc)}"></label>
+        <span class="acts">
+          <button class="primary tiny" data-save-target="${attr(target.target_id)}">저장</button>
+          <button class="secondary tiny" data-cancel>취소</button>
+        </span>
+      </div>`
+    : `<div class="tgrid">
+        <span class="tid">${escape(target.target_id)}</span>
+        <span class="tname">${cell(target.name)}</span>
+        <span class="tdesc">${cell(target.location_desc)}</span>
+        <span class="acts">
+          <button class="ghost tiny" data-edit-target="${attr(target.target_id)}">수정</button>
+          <button class="ghost tiny" data-del-target="${attr(target.target_id)}">삭제</button>
+        </span>
+      </div>`;
+
+  const targetChoices = (selected) => state.targets
+    .map((t) => `<option value="${attr(t.target_id)}" ${t.target_id === selected ? 'selected' : ''}>${escape(t.target_id)}</option>`)
+    .join('');
+
+  const pointRow = (point) => {
+    const list = byPoint[point.point_id] || [];
+    const current = list.find((b) => b.is_current);
+    if (editing('point', point.point_id)) {
+      return `<tr>
+        <td><input data-f="point_id" value="${attr(point.point_id)}"></td>
+        <td><input data-f="name" value="${attr(point.name)}"></td>
+        <td><input data-f="location_desc" value="${attr(point.location_desc)}"></td>
+        <td><select data-f="tone">
+          <option value="white" ${point.tone === 'white' ? 'selected' : ''}>white</option>
+          <option value="black" ${point.tone === 'black' ? 'selected' : ''}>black</option>
+        </select></td>
+        <td><select data-f="target_id">${targetChoices(point.target_id)}</select></td>
+        <td class="actcell"><span class="acts">
+          <button class="primary tiny" data-save-point="${attr(point.point_id)}">저장</button>
+          <button class="secondary tiny" data-cancel>취소</button>
+        </span></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td class="key">${escape(point.point_id)}</td>
+      <td>${cell(point.name)}</td>
+      <td>${cell(point.location_desc)}</td>
+      <td><span class="badge info"><i class="dot"></i>${escape(point.tone)}</span></td>
+      <td>${current
+        ? `<span class="badge ok"><i class="dot"></i>${stamp(current.effective_from)} 부착</span>`
+        : '<span class="badge warn"><i class="dot"></i>없음</span>'}
+        ${list.length > 1 ? `<span class="muted">이력 ${list.length}건</span>` : ''}</td>
+      <td class="actcell"><span class="acts">
+        <button class="ghost tiny" data-edit-point="${attr(point.point_id)}">수정</button>
+        <button class="ghost tiny" data-del-point="${attr(point.point_id)}">삭제</button>
+      </span></td>
+    </tr>`;
+  };
+
   $('#tree').innerHTML = state.targets.map((target) => {
     const children = state.points.filter((p) => p.target_id === target.target_id);
     return `<li>
-      <strong>${escape(target.target_id)}</strong>
-      <span class="muted">${escape(target.name || '')} ${escape(target.location_desc || '')}</span>
-      <ul>${children.length ? children.map((point) => {
-        const list = byPoint[point.point_id] || [];
-        const current = list.find((b) => b.is_current);
-        return `<li>
-          <span class="key">${escape(point.point_id)}</span>
-          <span class="muted">${escape(point.name || '')}</span>
-          <span class="badge info"><i class="dot"></i>${escape(point.tone)}</span>
-          ${current
-            ? `<span class="badge ok"><i class="dot"></i>기준 ${stamp(current.effective_from)}</span>`
-            : '<span class="badge warn"><i class="dot"></i>기준 없음</span>'}
-          ${list.length > 1 ? `<span class="muted">이력 ${list.length}건</span>` : ''}
-        </li>`;
-      }).join('') : '<li class="muted">등록된 개소가 없다</li>'}</ul>
+      ${targetRow(target)}
+      <div class="indent">${children.length ? `<table>
+        <thead><tr>
+          <th class="plain">개소</th><th class="plain">명칭</th>
+          <th class="plain">물리적 위치</th><th class="plain">톤</th>
+          <th class="plain">기준 사진</th><th class="plain actcell"></th>
+        </tr></thead>
+        <tbody>${children.map(pointRow).join('')}</tbody>
+      </table>` : '<p class="tnone" style="margin:8px 0 0">등록된 개소가 없다</p>'}</div>
     </li>`;
-  }).join('') || '<li class="muted">등록된 촬영 단위가 없다</li>';
+  }).join('') || '<li class="tnone">등록된 촬영 단위가 없다</li>';
 }
 
 // ── 붙이기 ──────────────────────────────────────────────────────────
@@ -439,7 +734,15 @@ function bind() {
   });
 
   $('#f-apply').addEventListener('click', () => loadReadings().catch((e) => toast(e.message, true)));
-  $('#f-csv').addEventListener('click', () => { location.href = `/api/readings/export.csv?${query()}`; });
+  $('#f-csv').addEventListener('click', exportCsv);
+  $('#f-reset').addEventListener('click', () => {
+    state.colFilters = {};
+    state.sort = [{ key: 'captured_at', desc: true }];
+    drawReadings();
+  });
+  // 메뉴 밖을 누르면 닫는다.
+  document.addEventListener('click', closeColumnMenu);
+  window.addEventListener('resize', closeColumnMenu);
   $('#f-rerun').addEventListener('click', async () => {
     const override = prompt('재판독에 적용할 설정 오버라이드 (JSON). 비우면 서버 설정 그대로.', '{}');
     if (override === null) return;
@@ -456,14 +759,8 @@ function bind() {
     } catch (error) { toast(error.message, true); }
   });
 
-  $$('#t-readings thead th[data-sort]').forEach((th) => th.addEventListener('click', () => {
-    const key = th.dataset.sort;
-    state.desc = state.order === key ? !state.desc : true;
-    state.order = key;
-    loadReadings().catch((e) => toast(e.message, true));
-  }));
-
   $('#r-files').addEventListener('change', () => pickFiles().catch((e) => toast(e.message, true)));
+  $('#r-apply-all').addEventListener('click', applyToAll);
   $('#r-go').addEventListener('click', startRun);
 
   $('#d-load').addEventListener('click', () => loadStack().catch((e) => toast(e.message, true)));
@@ -483,6 +780,48 @@ function bind() {
       $('#r-progress').style.display = 'block';
       watch(run.id);
     } catch (error) { toast(error.message, true); }
+  });
+
+  // 등록 화면의 수정·삭제. 행이 다시 그려지므로 개별 버튼에 붙이지 않고
+  // 한 곳에서 위임해 받는다.
+  document.addEventListener('click', async (event) => {
+    const node = event.target.closest?.('[data-edit-target],[data-edit-point],[data-save-target],[data-save-point],[data-del-target],[data-del-point],[data-cancel]');
+    if (!node) return;
+    const data = node.dataset;
+
+    if (data.cancel !== undefined) { state.edit = null; await loadRegistry(); return; }
+    if (data.editTarget) { state.edit = { kind: 'target', id: data.editTarget }; await loadRegistry(); return; }
+    if (data.editPoint) { state.edit = { kind: 'point', id: data.editPoint }; await loadRegistry(); return; }
+
+    try {
+      if (data.saveTarget) {
+        await api(`/api/targets/${encodeURIComponent(data.saveTarget)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fields(node)),
+        });
+        toast('촬영 단위를 고쳤다');
+      } else if (data.savePoint) {
+        await api(`/api/points/${encodeURIComponent(data.savePoint)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fields(node)),
+        });
+        toast('개소를 고쳤다');
+      } else if (data.delTarget) {
+        if (!confirm(`촬영 단위 ${data.delTarget} 를 지운다. 되돌릴 수 없다.`)) return;
+        await api(`/api/targets/${encodeURIComponent(data.delTarget)}`, { method: 'DELETE' });
+        toast('촬영 단위를 지웠다');
+      } else if (data.delPoint) {
+        if (!confirm(`개소 ${data.delPoint} 를 지운다. 이 개소의 기준 사진도 함께 사라진다.`)) return;
+        await api(`/api/points/${encodeURIComponent(data.delPoint)}`, { method: 'DELETE' });
+        toast('개소를 지웠다');
+      }
+      state.edit = null;
+      await loadRegistry();
+    } catch (error) {
+      toast(error.message, true);
+    }
   });
 
   $('#n-target-go').addEventListener('click', async () => {
@@ -527,14 +866,28 @@ function bind() {
     const form = new FormData();
     form.append('file', file, file.name);
     if ($('#b-point').value) form.append('point_id', $('#b-point').value);
-    if ($('#b-when').value) form.append('effective_from', $('#b-when').value);
+    // 시:분을 비우면 그날 00시 00분이다. 부착은 대개 날짜 단위로 기억하고,
+    // 같은 날 두 번 갈아 붙이는 일은 거의 없다.
+    const date = $('#b-date').value;
+    if (date) form.append('effective_from', `${date}T${$('#b-time').value || '00:00'}`);
     try {
       await api('/api/baselines', { method: 'POST', body: form });
-      $('#b-file').value = '';
+      $('#b-file').value = $('#b-date').value = $('#b-time').value = '';
       await loadRegistry();
       toast('기준 사진을 등록했다');
     } catch (error) { toast(error.message, true); }
   });
+}
+
+/** 편집 중인 행의 입력값을 모은다. 빈 칸은 null 로 보내 값을 지운다. */
+function fields(node) {
+  const scope = node.closest('tr') || node.closest('.tgrid');
+  const out = {};
+  $$('[data-f]', scope).forEach((input) => {
+    const value = input.value.trim();
+    out[input.dataset.f] = value === '' ? null : value;
+  });
+  return out;
 }
 
 async function boot() {
@@ -546,14 +899,6 @@ async function boot() {
 
   bind();
   route();
-  try {
-    const config = await api('/api/reader/config');
-    $('#reader-state').className = 'badge ok';
-    $('#reader-state').innerHTML = `<i class="dot"></i>판독기 연결 · ${escape(config.source ? '설정 파일' : '내장 기본값')}`;
-  } catch {
-    $('#reader-state').className = 'badge bad';
-    $('#reader-state').innerHTML = '<i class="dot"></i>판독기 응답 없음';
-  }
   await loadRegistry();
   await Promise.all([loadReadings(), loadRuns()]);
 }

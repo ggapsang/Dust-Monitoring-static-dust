@@ -48,7 +48,7 @@ class Job:
 
 
 def effective_baseline(
-    session: Session, point_id: str, moment: datetime
+    session: Session, point_id: str, moment: datetime, ignore_window: bool = False
 ) -> Baseline | None:
     """그 시각에 유효한 기준. 없으면 ``None``.
 
@@ -58,20 +58,24 @@ def effective_baseline(
 
     순서는 ``effective_from`` 만 본다. 파일명의 회차 표기는 참고값이다 -
     같은 정보를 두 곳에 두면 어긋났을 때 어느 쪽을 믿을 근거가 없다.
+
+    ``ignore_window`` 를 켜면 시점을 보지 않고 그 개소의 가장 나중 기준을
+    쓴다. 실증 중에는 기준을 나중에 등록하거나 부착 일시를 대충 넣는 일이
+    잦아, 촬영보다 늦은 기준밖에 없어서 판독이 통째로 안 도는 경우가 생긴다.
+    켜고 얻은 값은 **부착 이후 쌓인 양이 아닐 수 있다** - 촬영보다 나중에
+    붙인 패드를 기준으로 삼으면 그 사이의 침착이 빠진다.
     """
-    stmt = (
-        select(Baseline)
-        .where(Baseline.point_id == point_id)
-        .where(Baseline.effective_from <= moment)
-        .where((Baseline.superseded_at.is_(None)) | (Baseline.superseded_at > moment))
-        .order_by(Baseline.effective_from.desc())
-        .limit(1)
-    )
+    stmt = select(Baseline).where(Baseline.point_id == point_id)
+    if not ignore_window:
+        stmt = stmt.where(Baseline.effective_from <= moment).where(
+            (Baseline.superseded_at.is_(None)) | (Baseline.superseded_at > moment)
+        )
+    stmt = stmt.order_by(Baseline.effective_from.desc()).limit(1)
     return session.execute(stmt).scalars().first()
 
 
 def plan_jobs(
-    session: Session, capture: Capture
+    session: Session, capture: Capture, ignore_window: bool = False
 ) -> tuple[list[Job], list[dict[str, Any]]]:
     """사진 한 장을 어떻게 부를지 정한다. (호출 목록, 알림 목록)
 
@@ -97,14 +101,21 @@ def plan_jobs(
 
     by_tone: dict[str, tuple[list[Point], list[Baseline]]] = {}
     for point in points:
-        base = effective_baseline(session, point.point_id, capture.captured_at)
+        base = effective_baseline(
+            session, point.point_id, capture.captured_at, ignore_window
+        )
         if base is None:
             notes.append(
                 {
                     "capture_id": capture.id,
                     "point_id": point.point_id,
                     "kind": "no_baseline",
-                    "message": "촬영 일시에 유효한 기준 사진이 없어 요청에서 제외했다",
+                    "message": (
+                        "등록된 기준 사진이 없어 요청에서 제외했다"
+                        if ignore_window
+                        else "촬영 일시에 유효한 기준 사진이 없어 요청에서 제외했다. "
+                        "등록 시점을 대조하지 않으려면 판독 실행에서 그 항목을 켠다"
+                    ),
                 }
             )
             continue
@@ -234,7 +245,7 @@ async def process_capture(
         capture = session.get(Capture, capture_id)
         if run is None or capture is None:
             return
-        jobs, notes = plan_jobs(session, capture)
+        jobs, notes = plan_jobs(session, capture, bool(run.ignore_baseline_window))
         overrides = dict(run.config_override or {})
         append_notes(run, notes)
         # 판독 호출 동안 세션을 잡고 있지 않는다. 한 장에 몇 초가 걸려서,
