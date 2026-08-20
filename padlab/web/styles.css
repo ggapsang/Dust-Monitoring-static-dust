@@ -223,6 +223,9 @@ td.key { font-weight: 500; }
 .badge.warn { background: var(--status-warning-bg); color: var(--status-warning-fg); border-color: var(--status-warning-border); }
 .badge.bad  { background: var(--status-error-bg);   color: var(--status-error-fg);   border-color: var(--status-error-border); }
 .badge.info { background: var(--accent-subtle); color: var(--accent-subtle-text); border-color: var(--accent-subtle-border); }
+/* 짝이 되는 두 상태 중 '평소' 쪽. 칩 모양은 같이 가되 색은 쓰지 않는다 -
+   기본값에 강조색을 주면 화면이 온통 강조가 되어 정작 볼 것이 안 보인다. */
+.badge.neutral { background: var(--bg-base); color: var(--text-secondary); border-color: var(--border-divider); }
 /* 상태를 색만으로 전달하지 않는다. 아이콘 자리를 반드시 채운다. */
 .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 

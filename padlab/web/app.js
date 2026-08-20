@@ -103,7 +103,10 @@ const COLUMNS = [
   { key: 'elapsed_ms', label: '처리(ms)', kind: 'num', digits: 0 },
   { key: 'run_kind', label: '실행', kind: 'text',
     get: (r) => (r.run_kind === 'rerun' ? '재판독' : '최초'),
-    cell: (r) => `${r.run_kind === 'rerun' ? '<span class="badge info"><i class="dot"></i>재판독</span>' : '최초'}${r.has_override ? ' <span class="badge info"><i class="dot"></i>설정</span>' : ''}` },
+    cell: (r) => `${r.run_kind === 'rerun'
+      ? '<span class="badge info"><i class="dot"></i>재판독</span>'
+      : '<span class="badge neutral"><i class="dot"></i>최초</span>'}${r.has_override
+      ? ' <span class="badge info"><i class="dot"></i>설정</span>' : ''}` },
 ];
 
 const raw = (column, row) => (column.get ? column.get(row) : row[column.key]);
@@ -204,7 +207,7 @@ function drawReadings() {
     ? `${rows.length}건${hidden ? ` (필터로 ${hidden}건 숨김)` : ''}${order ? ` · 정렬 ${order}` : ''}`
     : '';
   $('#results-empty').style.display = state.readings.length ? 'none' : 'block';
-  $('#f-rerun').disabled = state.selected.size === 0;
+  $('#f-rerun').disabled = $('#f-delete').disabled = state.selected.size === 0;
 
   $$('#t-readings tbody tr').forEach((tr) => tr.addEventListener('click', (event) => {
     if (event.target.dataset.pick) return;
@@ -214,7 +217,7 @@ function drawReadings() {
     const id = Number(box.dataset.pick);
     box.checked ? state.selected.add(id) : state.selected.delete(id);
     box.closest('tr').classList.toggle('sel', box.checked);
-    $('#f-rerun').disabled = state.selected.size === 0;
+    $('#f-rerun').disabled = $('#f-delete').disabled = state.selected.size === 0;
   }));
   $$('#t-head th[data-col]').forEach((th) => th.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -325,6 +328,59 @@ function applyColumnFilter(menu, column) {
 
 function closeColumnMenu() {
   if (state.menu) { state.menu.remove(); state.menu = null; }
+}
+
+// ── 조회 조건 저장 ──────────────────────────────────────────────────
+//
+// 브라우저에 둔다. 서버에 두면 여러 사람이 나눠 쓸 수 있지만 표를 만들고
+// 엔드포인트를 늘려야 하고, 실증은 한 사람이 한 자리에서 돌린다. 옮겨야 할
+// 때가 오면 아래 두 함수의 저장소만 바꾸면 된다.
+
+const PRESET_KEY = 'padlab-presets';
+
+const loadPresets = () => {
+  try { return JSON.parse(localStorage.getItem(PRESET_KEY)) || {}; }
+  catch { return {}; }
+};
+const savePresets = (all) => localStorage.setItem(PRESET_KEY, JSON.stringify(all));
+
+/** 지금 조건을 저장할 수 있는 형태로. Set 은 그대로 직렬화되지 않는다. */
+function currentPreset() {
+  const filters = {};
+  Object.entries(state.colFilters).forEach(([key, rule]) => {
+    filters[key] = rule.values ? { values: [...rule.values] } : { min: rule.min, max: rule.max };
+  });
+  return {
+    filters,
+    sort: state.sort.map((k) => ({ ...k })),
+    since: $('#f-since').value,
+    until: $('#f-until').value,
+  };
+}
+
+async function applyPreset(preset) {
+  state.colFilters = {};
+  Object.entries(preset.filters || {}).forEach(([key, rule]) => {
+    state.colFilters[key] = rule.values
+      ? { values: new Set(rule.values) }
+      : { min: rule.min ?? null, max: rule.max ?? null };
+  });
+  state.sort = (preset.sort || []).map((k) => ({ ...k }));
+
+  // 기간이 달라지면 가져올 범위가 달라지므로 다시 받아야 한다.
+  const changed = $('#f-since').value !== (preset.since || '')
+    || $('#f-until').value !== (preset.until || '');
+  $('#f-since').value = preset.since || '';
+  $('#f-until').value = preset.until || '';
+  if (changed) await loadReadings();
+  else drawReadings();
+}
+
+function drawPresets(selected = '') {
+  const names = Object.keys(loadPresets()).sort((a, b) => a.localeCompare(b, 'ko'));
+  $('#f-preset').innerHTML = '<option value="">선택</option>'
+    + names.map((name) => `<option value="${escape(name)}" ${name === selected ? 'selected' : ''}>${escape(name)}</option>`).join('');
+  $('#f-drop').disabled = !$('#f-preset').value;
 }
 
 /** 지금 보이는 그대로 CSV 로 낸다. 화면과 파일이 다르면 어느 쪽이 맞는지 알 수 없다. */
@@ -613,10 +669,12 @@ async function loadRuns() {
   const runs = await api('/api/runs?limit=20');
   $('#t-runs tbody').innerHTML = runs.map((run) => `<tr>
     <td>${run.id}</td><td>${stamp(run.executed_at)}</td>
-    <td>${run.kind === 'rerun' ? '재판독' : '최초'}</td>
+    <td>${run.kind === 'rerun'
+      ? '<span class="badge info"><i class="dot"></i>재판독</span>'
+      : '<span class="badge neutral"><i class="dot"></i>최초</span>'}</td>
     <td>${run.ignore_baseline_window
       ? '<span class="badge warn"><i class="dot"></i>무시</span>'
-      : '<span class="muted">대조</span>'}</td>
+      : '<span class="badge neutral"><i class="dot"></i>대조</span>'}</td>
     <td><span class="badge ${run.status === 'done' ? 'ok' : run.status === 'failed' ? 'bad' : 'info'}"><i class="dot"></i>${escape(run.status)}</span></td>
     <td class="num">${run.done_captures}/${run.total_captures}</td>
     <td class="num">${run.reading_count}</td>
@@ -735,9 +793,60 @@ function bind() {
 
   $('#f-apply').addEventListener('click', () => loadReadings().catch((e) => toast(e.message, true)));
   $('#f-csv').addEventListener('click', exportCsv);
+  $('#f-delete').addEventListener('click', async () => {
+    const count = state.selected.size;
+    if (!confirm(`판독 결과 ${count}건을 지운다. 되돌릴 수 없다.
+
+원본 사진과 기준 사진은 그대로 두므로 다시 판독할 수 있다.`)) return;
+    try {
+      const done = await api('/api/readings', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reading_ids: [...state.selected] }),
+      });
+      state.selected.clear();
+      await Promise.all([loadReadings(), loadRuns()]);
+      toast(`판독 결과 ${done.deleted}건을 지웠다`);
+    } catch (error) { toast(error.message, true); }
+  });
+
+  $('#f-preset').addEventListener('change', async () => {
+    const name = $('#f-preset').value;
+    $('#f-drop').disabled = !name;
+    if (!name) return;
+    const preset = loadPresets()[name];
+    if (!preset) return;
+    try { await applyPreset(preset); } catch (error) { toast(error.message, true); }
+  });
+
+  $('#f-save').addEventListener('click', () => {
+    const name = prompt('이 조회 조건에 붙일 이름', $('#f-preset').value || '');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) { toast('이름이 비어 있다', true); return; }
+    const all = loadPresets();
+    if (all[trimmed] && !confirm(`'${trimmed}' 이 이미 있다. 지금 조건으로 덮어쓴다.`)) return;
+    all[trimmed] = currentPreset();
+    savePresets(all);
+    drawPresets(trimmed);
+    toast(`'${trimmed}' 으로 저장했다`);
+  });
+
+  $('#f-drop').addEventListener('click', () => {
+    const name = $('#f-preset').value;
+    if (!name || !confirm(`저장된 조회 조건 '${name}' 을 지운다.`)) return;
+    const all = loadPresets();
+    delete all[name];
+    savePresets(all);
+    drawPresets();
+    toast(`'${name}' 을 지웠다`);
+  });
+
   $('#f-reset').addEventListener('click', () => {
     state.colFilters = {};
     state.sort = [{ key: 'captured_at', desc: true }];
+    $('#f-preset').value = '';
+    $('#f-drop').disabled = true;
     drawReadings();
   });
   // 메뉴 밖을 누르면 닫는다.
@@ -899,6 +1008,7 @@ async function boot() {
 
   bind();
   route();
+  drawPresets();
   await loadRegistry();
   await Promise.all([loadReadings(), loadRuns()]);
 }

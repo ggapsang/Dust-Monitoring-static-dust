@@ -37,9 +37,16 @@
       <button class="ghost" id="f-reset">필터 초기화</button>
       <button class="ghost" id="f-csv">CSV 내보내기</button>
       <button class="secondary" id="f-rerun" disabled>선택 재판독</button>
+      <button class="danger" id="f-delete" disabled>선택 삭제</button>
       <span class="muted grow" id="f-count" style="text-align:right"></span>
     </div>
-    <p class="muted">열 이름을 누르면 그 열에서 정렬하고 값을 골라 거를 수 있다.</p>
+    <div class="row" style="margin-top:12px">
+      <label class="field">저장된 조회 조건
+        <select id="f-preset"><option value="">선택</option></select></label>
+      <button class="secondary" id="f-save">지금 조건 저장</button>
+      <button class="ghost" id="f-drop" disabled>저장된 것 삭제</button>
+    </div>
+    <p class="muted">열 이름을 누르면 그 열에서 정렬하고 값을 골라 거를 수 있다. 자주 쓰는 조합은 이름을 붙여 저장해 두고 불러 쓴다.</p>
   </div>
   <div class="card" style="padding:0">
     <div class="scroll tall"><table id="t-readings">

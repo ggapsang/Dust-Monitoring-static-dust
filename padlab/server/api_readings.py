@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
+from . import storage
 from .deps import get_root, get_session
 from .models import Baseline, Capture, Point, Reading, Run
 from .schemas import (
@@ -248,6 +249,36 @@ def export_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="readings.csv"'},
     )
+
+
+@router.delete("/readings", summary="판독 결과 삭제")
+def delete_readings(
+    session: Annotated[Session, Depends(get_session)],
+    root: Annotated[Path, Depends(get_root)],
+    body: dict[str, Any],
+) -> dict[str, int]:
+    """고른 판독 건과 그 결과 이미지를 지운다. ``reading_ids`` 를 받는다.
+
+    **지우는 것은 판독 결과뿐이다.** 원본 사진과 기준 사진, 실행 기록은
+    그대로 둔다. 사진이 남아 있어야 설정을 바꿔 다시 판독할 수 있고, 기준은
+    여러 판독이 함께 쓰고 있으며, 실행 기록에는 왜 어떤 개소가 빠졌는지가
+    남아 있다.
+    """
+    ids = body.get("reading_ids") or []
+    if not ids:
+        raise HTTPException(400, "reading_ids 가 비어 있다")
+
+    rows = list(session.execute(select(Reading).where(Reading.id.in_(ids))).scalars())
+    if not rows:
+        raise HTTPException(404, "해당하는 판독 건이 없다")
+
+    for row in rows:
+        # 결과 이미지는 그 판독 건에만 딸린 것이라 함께 지운다.
+        storage.remove_tree(storage.result_dir(root, row.id))
+        session.delete(row)
+
+    session.commit()
+    return {"deleted": len(rows)}
 
 
 @router.get("/readings/{reading_id}", response_model=ReadingDetail, summary="판독 결과 단건")
