@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "padlab"
+version = "0.1.0"
+description = "참조 패드 판독 실증 관리 서버 — 판독 실행과 결과 누적"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*"]

@@ -1,15 +1,19 @@
-# 판독 서비스 기동.
+# 판독 서비스와 실증 관리 서버.
 #
 #   docker compose up -d --build
-#   curl localhost:8911/healthz
-#   curl localhost:8911/config          # source 가 마운트한 파일인지 확인
+#   curl localhost:8911/healthz         # 판독 서비스
+#   curl localhost:8912/healthz         # 실증 관리 서버
+#   http://localhost:8912/              # 화면
 #
-# 임계값을 바꿀 때는 config/default.yaml 만 고치고 restart 한다.
+# 임계값을 바꿀 때는 reader/config/default.yaml 만 고치고 restart 한다.
 # 이미지를 다시 구울 필요가 없다.
+#
+# 두 서비스가 이미지 저장소를 같은 경로(/data)에 붙인다. 판독 요청이 업로드
+# 본문이 아니라 경로로 나가므로, 경로 문자열이 양쪽에서 같아야 한다.
 
 services:
   padreader:
-    build: .
+    build: ./reader
     image: padreader:0.1.0
     container_name: padreader
     restart: unless-stopped
@@ -19,8 +23,51 @@ services:
       PADREADER_CONFIG: /app/config/default.yaml
     volumes:
       # 설정은 읽기 전용으로 붙인다. 서비스가 설정을 쓰는 일은 없다.
-      - ./config:/app/config:ro
-      # TARGET_ID 판독용 폰트. 여기에 파일을 넣고 restart 하면 반영된다.
+      - ./reader/config:/app/config:ro
+      # POINT_ID 판독용 폰트. 여기에 파일을 넣고 restart 하면 반영된다.
       - ./assets/fonts:/app/assets/fonts:ro
       # 판독 대상 이미지. /read/path 로 업로드 없이 읽을 때 쓴다.
-      - ./data:/data:ro
+      # 판독 서비스는 읽기만 한다 - 쓰는 쪽은 padlab 이다.
+      - images:/data:ro
+
+  padlab:
+    build: ./padlab
+    image: padlab:0.1.0
+    container_name: padlab
+    restart: unless-stopped
+    depends_on:
+      padreader:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8912:8912"
+    environment:
+      PADLAB_DATABASE_URL: postgresql+psycopg://padlab:padlab@postgres:5432/padlab
+      PADLAB_PADSERVICE_URL: http://padreader:8911
+      PADLAB_DATA_DIR: /data
+      # 판독은 CPU 바운드다. 늘려도 선형으로 빨라지지 않는다.
+      PADLAB_CONCURRENCY: "2"
+    volumes:
+      - images:/data
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: padlab-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: padlab
+      POSTGRES_PASSWORD: padlab
+      POSTGRES_DB: padlab
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U padlab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  # 기준 사진, 판독 사진, 결과 이미지. 두 서비스가 같은 경로로 나눠 갖는다.
+  images:
+  pgdata:

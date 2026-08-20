@@ -1,0 +1,211 @@
+"""요청·응답 모델.
+
+판독 응답을 그대로 옮기지 않는다. 여기 있는 것은 실증 관리에 필요한 형태이며,
+판독 응답 원본은 ``reading.response`` 에 통째로 남아 있다.
+
+실패 사유의 한글 표기를 이쪽에서 만들지 않는다. 판독 응답의 ``summary`` 에
+이미 들어 있고, 같은 문구를 두 곳에 두면 조용히 어긋난다. 화면 표시는
+``summary``, 필터·집계는 원문 ``failure_reason`` 을 쓴다.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+Tone = Literal["white", "black"]
+
+
+class TargetIn(BaseModel):
+    target_id: str = Field(description="AMR 촬영 단위. 에코프로비엠 체계의 값")
+    name: str | None = None
+    location_desc: str | None = Field(default=None, description="촬영 위치 설명")
+    note: str | None = None
+
+
+class TargetPatch(BaseModel):
+    name: str | None = None
+    location_desc: str | None = None
+    note: str | None = None
+
+
+class TargetOut(TargetIn):
+    created_at: datetime
+    point_count: int = 0
+
+
+class PointIn(BaseModel):
+    point_id: str = Field(description="패드에 인쇄된 관측 개소 번호")
+    target_id: str = Field(description="이 개소가 찍히는 촬영 단위")
+    name: str | None = None
+    location_desc: str | None = Field(default=None, description="물리적 위치 설명")
+    tone: Tone = Field(
+        default="white",
+        description=(
+            "패드 톤. 개소마다 분진 색이 고정이라 등록 정보로 둔다. "
+            "어두운 분진이면 white, 밝은 분진이면 black 이다."
+        ),
+    )
+    note: str | None = None
+
+
+class PointPatch(BaseModel):
+    target_id: str | None = None
+    name: str | None = None
+    location_desc: str | None = None
+    tone: Tone | None = None
+    note: str | None = None
+
+
+class PointOut(PointIn):
+    created_at: datetime
+    has_baseline: bool = False
+
+
+class BaselineOut(BaseModel):
+    id: int
+    point_id: str
+    file_path: str
+    original_name: str | None = None
+    effective_from: datetime
+    superseded_at: datetime | None = None
+    revision_hint: int | None = Field(
+        default=None,
+        description=(
+            "파일명이 말하는 회차. 참고값이며 현행 기준 판정에 쓰지 않는다. "
+            "순서는 effective_from 이 정한다."
+        ),
+    )
+    registered_at: datetime
+    is_current: bool = False
+
+
+class CaptureOut(BaseModel):
+    id: int
+    target_id: str
+    file_path: str
+    original_name: str | None = None
+    captured_at: datetime
+    uploaded_at: datetime
+    note: str | None = None
+
+
+class ParsedUpload(BaseModel):
+    """업로드 전 파일명 파싱 결과. 화면이 값을 미리 채우는 데 쓴다."""
+
+    filename: str
+    parsed: bool
+    target_id: str | None = None
+    point_id: str | None = None
+    stamp: datetime | None = None
+    revision_hint: int | None = None
+    known_id: bool = Field(
+        default=False, description="파싱된 식별자가 등록 목록에 있는지"
+    )
+    message: str | None = None
+
+
+class RunOut(BaseModel):
+    id: int
+    executed_at: datetime
+    finished_at: datetime | None = None
+    kind: str
+    status: str
+    config_override: dict[str, Any] = {}
+    source_run_id: int | None = None
+    total_captures: int = 0
+    done_captures: int = 0
+    notes: list[dict[str, Any]] = []
+    reading_count: int = 0
+
+
+class ReadingOut(BaseModel):
+    id: int
+    run_id: int
+    capture_id: int
+    baseline_id: int | None = None
+    point_id: str | None = None
+    target_id: str | None = None
+    pad_index: int = 0
+    tone: str = "white"
+
+    captured_at: datetime | None = None
+    sequence: int | None = Field(
+        default=None, description="그 개소에서 촬영 일시 순으로 매긴 회차"
+    )
+
+    success: bool
+    failure_reason: str | None = None
+    failure_detail: str | None = None
+    summary: str | None = None
+
+    score_uniform: float | None = None
+    score_localized: float | None = None
+    score_combined: float | None = None
+    quality_sharpness: float | None = None
+    quality_saturated_ratio: float | None = None
+    quality_pad_size_px: float | None = None
+    quality_pad_size_diff_ratio: float | None = None
+    read_point_id: str | None = None
+    elapsed_ms: float | None = None
+
+    run_kind: str | None = None
+    has_override: bool = False
+
+    images: dict[str, str] = Field(
+        default={}, description="저장된 결과 이미지 주소. 없으면 비어 있다"
+    )
+
+
+class ReadingDetail(ReadingOut):
+    """단건 조회. 원본 사진과 판독 응답 전체를 함께 준다."""
+
+    capture_image: str | None = None
+    baseline_image: str | None = None
+    config_override: dict[str, Any] = {}
+    response: dict[str, Any] | None = None
+
+
+class SeriesPoint(BaseModel):
+    reading_id: int
+    sequence: int
+    captured_at: datetime
+    absolute: float | None = Field(default=None, description="기준 대비 누적 총량")
+    delta: float | None = Field(default=None, description="직전 회차 대비 증분")
+    cusum: float | None = Field(default=None, description="증분에서 여유를 뺀 값의 합")
+
+
+class SeriesOut(BaseModel):
+    point_id: str
+    metric: str
+    points: list[SeriesPoint] = []
+    delta_median: float | None = None
+    delta_mad: float | None = None
+    limit: float | None = Field(
+        default=None,
+        description=(
+            "추세 이상 경계. 개소 자기 이력에서 낸다(증분 중앙값 + n x MAD). "
+            "n 이 비어 있으면 경계를 내지 않는다."
+        ),
+    )
+
+
+class Bin(BaseModel):
+    start: float
+    end: float
+    success: int = 0
+    failure: int = 0
+
+
+class DistributionOut(BaseModel):
+    metric: str
+    count: int = 0
+    minimum: float | None = None
+    median: float | None = None
+    maximum: float | None = None
+    bins: list[Bin] = []
+    failure_counts: dict[str, int] = Field(
+        default={}, description="실패 사유별 건수. 원문 사유 그대로다"
+    )

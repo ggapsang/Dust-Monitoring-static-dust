@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>패드 판독 실증</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="gnb">
+  <h1>패드 판독 실증</h1>
+  <nav>
+    <a href="#results" data-view="results">결과</a>
+    <a href="#run" data-view="run">판독 실행</a>
+    <a href="#detail" data-view="detail">상세 보기</a>
+    <a href="#series" data-view="series">회차 추이</a>
+    <a href="#dist" data-view="dist">지표 분포</a>
+    <a href="#registry" data-view="registry">등록</a>
+  </nav>
+  <div class="right">
+    <span id="reader-state" class="badge info"><i class="dot"></i>판독기 확인 중</span>
+    <button class="secondary" id="theme">라이트</button>
+  </div>
+</header>
+
+<main>
+
+<!-- 결과 누적 스프레드시트 ------------------------------------------->
+<section class="view" id="view-results">
+  <h2>판독 결과</h2>
+  <div class="card">
+    <div class="row">
+      <label class="field grow">촬영 단위
+        <select id="f-target"><option value="">전체</option></select></label>
+      <label class="field grow">개소
+        <select id="f-point"><option value="">전체</option></select></label>
+      <label class="field">성공 여부
+        <select id="f-success">
+          <option value="">전체</option><option value="true">성공</option><option value="false">실패</option>
+        </select></label>
+      <label class="field">실패 사유
+        <select id="f-reason"><option value="">전체</option></select></label>
+      <label class="field">실행 구분
+        <select id="f-kind">
+          <option value="">전체</option><option value="initial">최초</option><option value="rerun">재판독</option>
+        </select></label>
+      <label class="field">시작<input type="date" id="f-since"></label>
+      <label class="field">종료<input type="date" id="f-until"></label>
+      <button class="secondary" id="f-apply">적용</button>
+      <button class="ghost" id="f-csv">CSV 내보내기</button>
+      <button class="secondary" id="f-rerun" disabled>선택 재판독</button>
+    </div>
+  </div>
+  <div class="card" style="padding:0">
+    <div class="scroll"><table id="t-readings">
+      <thead><tr>
+        <th class="plain"></th>
+        <th data-sort="captured_at">촬영 일시</th>
+        <th class="plain">TARGET_ID</th>
+        <th class="plain">개소</th>
+        <th class="num plain">회차</th>
+        <th class="plain">상태</th>
+        <th class="num" data-sort="score_uniform">uniform</th>
+        <th class="num" data-sort="score_localized">localized</th>
+        <th class="num" data-sort="score_combined">total</th>
+        <th class="num" data-sort="quality_sharpness">선명도</th>
+        <th class="num" data-sort="quality_saturated_ratio">포화</th>
+        <th class="num" data-sort="quality_pad_size_px">패드 크기</th>
+        <th class="num" data-sort="quality_pad_size_diff_ratio">크기 차이</th>
+        <th class="plain">판독 번호</th>
+        <th class="num" data-sort="elapsed_ms">처리(ms)</th>
+        <th class="plain">실행</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="empty" id="results-empty">아직 판독 결과가 없다. 판독 실행에서 사진을 올린다.</div>
+  </div>
+</section>
+
+<!-- 판독 실행 ------------------------------------------------------->
+<section class="view" id="view-run">
+  <h2>판독 실행</h2>
+  <div class="card">
+    <div class="row">
+      <label class="field grow">판독 사진
+        <input type="file" id="r-files" multiple accept="image/*"></label>
+      <button class="primary" id="r-go" disabled>판독 시작</button>
+    </div>
+    <p class="muted">파일명이 <code>C_&lt;TARGET_ID&gt;_&lt;YYMMDD&gt;_&lt;HHMM&gt;_&lt;nn&gt;</code> 이면 촬영 단위와 일시를 자동으로 채운다. 못 읽은 것만 직접 지정한다.</p>
+    <div class="scroll"><table id="t-uploads">
+      <thead><tr><th class="plain">파일</th><th class="plain">촬영 단위</th><th class="plain">촬영 일시</th><th class="plain">상태</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <label class="field" style="margin-top:12px">설정 오버라이드 (JSON, 이 실행에만 적용)
+      <textarea id="r-override" placeholder='{"dust": {"depth_threshold": 0.08}}'></textarea></label>
+  </div>
+  <div class="card" id="r-progress" style="display:none">
+    <h3>진행</h3>
+    <div id="r-status"></div>
+  </div>
+  <div class="card">
+    <h3>최근 실행</h3>
+    <div class="scroll"><table id="t-runs">
+      <thead><tr><th class="plain">실행</th><th class="plain">시각</th><th class="plain">구분</th><th class="plain">상태</th><th class="num plain">사진</th><th class="num plain">결과</th><th class="plain">알림</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- 사진쌍 상세 ----------------------------------------------------->
+<section class="view" id="view-detail">
+  <h2>상세 보기</h2>
+  <div class="card">
+    <div class="row">
+      <label class="field grow">개소
+        <select id="d-point"><option value="">선택</option></select></label>
+      <label class="field">보기
+        <select id="d-mode">
+          <option value="one">한 건</option>
+          <option value="stack">회차별 이어 보기</option>
+        </select></label>
+      <button class="secondary" id="d-load">불러오기</button>
+    </div>
+  </div>
+  <div id="d-body"></div>
+</section>
+
+<!-- 개소별 회차 시계열 ---------------------------------------------->
+<section class="view" id="view-series">
+  <h2>회차 추이</h2>
+  <div class="card">
+    <div class="row">
+      <label class="field grow">개소
+        <select id="s-point"><option value="">선택</option></select></label>
+      <label class="field">지표
+        <select id="s-metric">
+          <option value="score_combined">total</option>
+          <option value="score_uniform">uniform</option>
+          <option value="score_localized">localized</option>
+        </select></label>
+      <label class="field">경계 배수 n<input type="number" id="s-n" step="0.5" placeholder="비우면 안 그림" style="width:120px"></label>
+      <label class="field">CUSUM 여유<input type="number" id="s-slack" step="0.01" value="0" style="width:120px"></label>
+      <button class="secondary" id="s-load">불러오기</button>
+    </div>
+    <p class="muted">개소마다 감도가 달라 개소 간 값을 직접 견주지 않는다. 이 화면은 개소 하나만 그린다.</p>
+  </div>
+  <div id="s-body"></div>
+</section>
+
+<!-- 지표 분포 ------------------------------------------------------->
+<section class="view" id="view-dist">
+  <h2>지표 분포</h2>
+  <div class="card">
+    <div class="row">
+      <label class="field grow">지표
+        <select id="x-metric">
+          <option value="score_combined">total</option>
+          <option value="score_uniform">uniform</option>
+          <option value="score_localized">localized</option>
+          <option value="quality_sharpness">선명도</option>
+          <option value="quality_saturated_ratio">포화 비율</option>
+          <option value="quality_pad_size_px">패드 크기</option>
+          <option value="quality_pad_size_diff_ratio">패드 크기 차이</option>
+          <option value="elapsed_ms">처리 시간</option>
+        </select></label>
+      <label class="field">개소
+        <select id="x-point"><option value="">전체</option></select></label>
+      <label class="field">구간 수<input type="number" id="x-bins" value="20" min="4" max="100" style="width:100px"></label>
+      <button class="secondary" id="x-load">불러오기</button>
+    </div>
+  </div>
+  <div id="x-body"></div>
+</section>
+
+<!-- 등록 ------------------------------------------------------------>
+<section class="view" id="view-registry">
+  <h2>등록</h2>
+  <div class="card">
+    <h3>촬영 단위 추가</h3>
+    <div class="row">
+      <label class="field">TARGET_ID<input id="n-target-id" placeholder="T0042"></label>
+      <label class="field grow">명칭<input id="n-target-name"></label>
+      <label class="field grow">촬영 위치 설명<input id="n-target-loc"></label>
+      <button class="primary" id="n-target-go">추가</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>개소 추가</h3>
+    <div class="row">
+      <label class="field">POINT_ID<input id="n-point-id" placeholder="1078"></label>
+      <label class="field">소속 촬영 단위<select id="n-point-target"></select></label>
+      <label class="field grow">명칭<input id="n-point-name"></label>
+      <label class="field grow">물리적 위치<input id="n-point-loc"></label>
+      <label class="field">패드 톤
+        <select id="n-point-tone"><option value="white">white</option><option value="black">black</option></select></label>
+      <button class="primary" id="n-point-go">추가</button>
+    </div>
+    <p class="muted">톤은 개소마다 분진 색이 고정이라 여기서 정한다. 어두운 분진이면 white, 밝은 분진이면 black 이다.</p>
+  </div>
+  <div class="card">
+    <h3>기준 사진 등록</h3>
+    <div class="banner">
+      <strong>기준 사진에는 패드를 하나만 담는다.</strong>
+      여러 개가 담기면 그 패드들의 부착 시점이 한 장에 묶여, 나중에 하나만 갈아 붙였을 때 나머지 기준까지 새 시점으로 덮어쓰게 된다.
+    </div>
+    <div class="row">
+      <label class="field grow">파일<input type="file" id="b-file" accept="image/*"></label>
+      <label class="field">개소<select id="b-point"><option value="">파일명에서</option></select></label>
+      <label class="field">부착 일시<input type="datetime-local" id="b-when"></label>
+      <button class="primary" id="b-go">등록</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>촬영 단위와 개소</h3>
+    <ul class="tree" id="tree"></ul>
+  </div>
+</section>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>

@@ -4,7 +4,7 @@ S = 1200
 FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
-def draw_pad(target_id, ink, bg, path, probe=True):
+def draw_pad(point_id, ink, bg, path, probe=True):
     img = Image.new("RGB", (S, S), bg)
     d = ImageDraw.Draw(img)
 
@@ -22,9 +22,9 @@ def draw_pad(target_id, ink, bg, path, probe=True):
                    (i0 + pad, i1 - pad - b)]:
         d.rectangle([cx, cy, cx + b, cy + b], fill=ink)
 
-    # 3) target id
+    # 3) point id
     f_id = ImageFont.truetype(FONT_B, 132)
-    d.text((S / 2, i0 + 22 + b / 2), target_id, font=f_id, fill=ink, anchor="mm")
+    d.text((S / 2, i0 + 22 + b / 2), point_id, font=f_id, fill=ink, anchor="mm")
 
     # 4) optional probe line group (sensitivity comparison during trial)
     if probe:

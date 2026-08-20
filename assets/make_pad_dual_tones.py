@@ -112,10 +112,10 @@ BLOCK_OFFSET = 0.0786
 """모서리 블록 크기와 패드 외곽에서의 거리. 기존 도안과 같다."""
 
 TOP_BAND = (BORDER, 0.1750)
-"""위쪽 인쇄 밴드. 모서리 블록, TARGET_ID, 앵커가 여기 들어간다."""
+"""위쪽 인쇄 밴드. 모서리 블록, POINT_ID, 앵커가 여기 들어간다."""
 
 ID_BOX = (0.3491, 0.0643, 0.6563, 0.1527)
-"""TARGET_ID 글자가 들어갈 자리. 기존 도안과 같다."""
+"""POINT_ID 글자가 들어갈 자리. 기존 도안과 같다."""
 
 ANCHOR = 0.0640
 """앵커 패치 한 변. 모서리 블록과 같은 크기로 맞췄다.
@@ -159,7 +159,7 @@ def corner_blocks() -> dict[str, tuple[float, float, float, float]]:
 def anchor_pair_x0(side: str) -> float:
     """앵커 쌍의 시작 x.
 
-    모서리 블록과 TARGET_ID 사이의 빈 구간 한가운데에 놓는다. 자리를 숫자로
+    모서리 블록과 POINT_ID 사이의 빈 구간 한가운데에 놓는다. 자리를 숫자로
     박아 두면 글자 폭이나 블록 크기를 조금만 바꿔도 서로 붙어 버린다.
     """
     blocks = corner_blocks()
@@ -199,7 +199,7 @@ FONT_CANDIDATES = (
 def load_font(size: int) -> ImageFont.FreeTypeFont:
     """굵은 산세리프. 없으면 기본 폰트로 떨어진다.
 
-    인쇄에 쓴 폰트를 판독기의 ``target_id.font_dir`` 에 같이 넣어야 번호
+    인쇄에 쓴 폰트를 판독기의 ``point_id.font_dir`` 에 같이 넣어야 번호
     판독이 맞는다. 여기서 고른 파일이 그 파일이다.
     """
     for path in FONT_CANDIDATES:
@@ -208,7 +208,7 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default(size)
 
 
-def draw_pad(target_id: str, tone: str, path: Path, probe: bool = True) -> None:
+def draw_pad(point_id: str, tone: str, path: Path, probe: bool = True) -> None:
     """도안 한 장.
 
     ``tone`` 은 패드 바탕색이다. ``white`` = 백색 바탕/흑색 인쇄(흑색 분진용),
@@ -253,12 +253,12 @@ def draw_pad(target_id: str, tone: str, path: Path, probe: bool = True) -> None:
         y1 = ANCHOR_Y + ANCHOR + LAMINATE_PAD
         rect((x0, y0, x1, y1), outline=ink, width=max(1, round(length(0.0027))))
 
-    # 4) TARGET_ID
+    # 4) POINT_ID
     box_h = length(ID_BOX[3] - ID_BOX[1])
     font = load_font(round(box_h * 1.15))
     d.text(
         (px((ID_BOX[0] + ID_BOX[2]) / 2), px((ID_BOX[1] + ID_BOX[3]) / 2)),
-        target_id, font=font, fill=ink, anchor="mm",
+        point_id, font=font, fill=ink, anchor="mm",
     )
 
     # 5) 선군. 상시 지표가 아니라 감도 비교용이다.
