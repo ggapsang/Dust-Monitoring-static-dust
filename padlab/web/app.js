@@ -173,25 +173,27 @@ function compare(column, x, y, desc) {
 }
 
 function drawReadings() {
-  $('#t-head').innerHTML = '<th class="plain"></th>' + COLUMNS.map((column) => {
+  $('#t-head').innerHTML = '<th class="plain"></th>' + COLUMNS.map((column, index) => {
     const rank = state.sort.findIndex((k) => k.key === column.key);
     const filtered = Boolean(state.colFilters[column.key]);
     // 정렬이 둘 이상이면 순번을 같이 낸다. 무엇이 먼저인지 안 보이면 왜 이
     // 순서로 늘어섰는지 알 수 없다.
     const mark = `${rank < 0 ? '' : (state.sort[rank].desc ? '▼' : '▲')
       + (state.sort.length > 1 ? rank + 1 : '')}${filtered ? '●' : ''}`;
-    return `<th class="${column.kind === 'num' ? 'num ' : ''}${rank >= 0 || filtered ? 'picked' : ''}"
+    // 촬영 일시만 왼쪽에 두고 그 뒤는 전부 가운데로 맞춘다. 열마다 정렬이
+    // 다르면 값이 어느 열 것인지 눈으로 좇기 어렵다.
+    return `<th class="${column.kind === 'num' ? 'num ' : ''}${index ? 'mid ' : ''}${rank >= 0 || filtered ? 'picked' : ''}"
       data-col="${column.key}">${escape(column.label)}<span class="mark">${mark}</span></th>`;
   }).join('');
 
   const rows = visibleRows();
   $('#t-readings tbody').innerHTML = rows.map((row) => `<tr data-id="${row.id}" class="${state.selected.has(row.id) ? 'sel' : ''}">
       <td><input type="checkbox" data-pick="${row.id}" ${state.selected.has(row.id) ? 'checked' : ''}></td>
-      ${COLUMNS.map((column) => {
+      ${COLUMNS.map((column, index) => {
         const body = column.cell
           ? column.cell(row)
           : (column.kind === 'num' ? num(raw(column, row), column.digits) : escape(face(column, row) || '—'));
-        return `<td class="${column.kind === 'num' ? 'num ' : ''}${column.cls || ''}">${body}</td>`;
+        return `<td class="${column.kind === 'num' ? 'num ' : ''}${index ? 'mid ' : ''}${column.cls || ''}">${body}</td>`;
       }).join('')}
     </tr>`).join('');
 
@@ -682,6 +684,68 @@ async function loadRuns() {
   </tr>`).join('');
 }
 
+// ── 기준 사진 이력 ──────────────────────────────────────────────────
+//
+// 패드를 갈아 붙이면 새 기준이 앞의 것을 대체하고 이력으로 남는다. 어느
+// 판독이 어느 기준과 견준 값인지는 부착 일시가 정한다 - 그래서 이력이
+// 보이지 않으면 값의 근거를 되짚을 수 없다.
+
+async function loadBaselineHistory() {
+  const point = $('#h-point').value;
+  const rows = await api(`/api/baselines${point ? `?point_id=${encodeURIComponent(point)}` : ''}`);
+  if (!rows.length) {
+    $('#h-body').innerHTML = '<div class="card empty">등록된 기준 사진이 없다.</div>';
+    return;
+  }
+
+  const thumbs = $('#h-thumb').checked;
+  const byPoint = {};
+  rows.forEach((row) => { (byPoint[row.point_id] ||= []).push(row); });
+
+  $('#h-body').innerHTML = Object.entries(byPoint)
+    .sort(([a], [b]) => a.localeCompare(b, 'ko'))
+    .map(([pointId, list]) => {
+      // 부착 일시 순서가 곧 이력 순서다. 파일명의 회차 표기는 참고값이라
+      // 그것으로 줄을 세우지 않는다.
+      const ordered = [...list].sort((a, b) => a.effective_from.localeCompare(b.effective_from));
+      const info = state.points.find((p) => p.point_id === pointId);
+      return `<div class="card">
+        <div class="row" style="justify-content:space-between; align-items:center">
+          <h3 style="margin:0">${escape(pointId)}
+            <span class="muted">${escape(info ? (info.name || '') : '')}</span></h3>
+          <span class="badge neutral"><i class="dot"></i>이력 ${ordered.length}건</span>
+        </div>
+        <div class="scroll"><table>
+          <thead><tr>
+            <th class="plain">회차</th><th class="plain">상태</th>
+            <th class="plain">부착 일시</th><th class="plain">대체된 일시</th>
+            <th class="plain">등록 일시</th><th class="plain">원본 파일명</th>
+            ${thumbs ? '<th class="plain">사진</th>' : ''}
+            <th class="plain actcell"></th>
+          </tr></thead>
+          <tbody>${ordered.map((row, index) => `<tr>
+            <td class="key">${index + 1}</td>
+            <td>${row.is_current
+              ? '<span class="badge ok"><i class="dot"></i>현행</span>'
+              : '<span class="badge neutral"><i class="dot"></i>대체됨</span>'}</td>
+            <td>${stamp(row.effective_from)}</td>
+            <td>${row.superseded_at ? stamp(row.superseded_at) : '—'}</td>
+            <td class="muted">${stamp(row.registered_at)}</td>
+            <td class="muted">${escape(row.original_name || '—')}</td>
+            ${thumbs ? `<td><a href="/files/${escape(row.file_path)}" target="_blank">
+              <img src="/files/${escape(row.file_path)}" loading="lazy"
+                   style="height:88px; border-radius:4px; display:block"
+                   onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'badge bad',textContent:'파일 없음'}))"></a></td>` : ''}
+            <td class="actcell"><span class="acts">
+              <button class="ghost tiny" data-base-when="${row.id}">일시 수정</button>
+              <button class="ghost tiny" data-base-del="${row.id}">삭제</button>
+            </span></td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </div>`;
+    }).join('');
+}
+
 // ── 등록 ────────────────────────────────────────────────────────────
 
 async function loadRegistry() {
@@ -697,6 +761,7 @@ async function loadRegistry() {
   $('#x-point').innerHTML = '<option value="">전체</option>' + pointOptions;
   ['#d-point', '#s-point'].forEach((sel) => { $(sel).innerHTML = '<option value="">선택</option>' + pointOptions; });
   $('#b-point').innerHTML = '<option value="">파일명에서</option>' + pointOptions;
+  $('#h-point').innerHTML = '<option value="">전체</option>' + pointOptions;
 
   const baselines = await api('/api/baselines');
   const byPoint = {};
@@ -875,6 +940,34 @@ function bind() {
   $('#d-load').addEventListener('click', () => loadStack().catch((e) => toast(e.message, true)));
   $('#s-load').addEventListener('click', () => loadSeries().catch((e) => toast(e.message, true)));
   $('#x-load').addEventListener('click', () => loadDistribution().catch((e) => toast(e.message, true)));
+  $('#h-load').addEventListener('click', () => loadBaselineHistory().catch((e) => toast(e.message, true)));
+
+  // 기준 사진 이력의 수정·삭제. 행이 다시 그려지므로 위임해 받는다.
+  document.addEventListener('click', async (event) => {
+    const node = event.target.closest?.('[data-base-when],[data-base-del]');
+    if (!node) return;
+    try {
+      if (node.dataset.baseWhen) {
+        const when = prompt('부착 일시를 다시 넣는다. 예: 2026-08-20 또는 2026-08-20T09:30');
+        if (when === null) return;
+        const text = when.trim();
+        if (!text) { toast('일시가 비어 있다', true); return; }
+        await api(`/api/baselines/${node.dataset.baseWhen}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ effective_from: text.includes('T') ? text : `${text}T00:00` }),
+        });
+        toast('부착 일시를 고쳤다');
+      } else {
+        if (!confirm('이 기준 사진을 지운다. 이 기준으로 나온 판독이 남아 있으면 지워지지 않는다.')) return;
+        await api(`/api/baselines/${node.dataset.baseDel}`, { method: 'DELETE' });
+        toast('기준 사진을 지웠다');
+      }
+      await Promise.all([loadRegistry(), loadBaselineHistory()]);
+    } catch (error) { toast(error.message, true); }
+  });
+  $('#h-point').addEventListener('change', () => loadBaselineHistory().catch((e) => toast(e.message, true)));
+  $('#h-thumb').addEventListener('change', () => loadBaselineHistory().catch((e) => toast(e.message, true)));
 
   document.addEventListener('click', async (event) => {
     const id = event.target.dataset?.rerun;
@@ -983,6 +1076,7 @@ function bind() {
       await api('/api/baselines', { method: 'POST', body: form });
       $('#b-file').value = $('#b-date').value = $('#b-time').value = '';
       await loadRegistry();
+      await loadBaselineHistory();
       toast('기준 사진을 등록했다');
     } catch (error) { toast(error.message, true); }
   });

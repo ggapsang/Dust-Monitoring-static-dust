@@ -93,6 +93,16 @@ class BaselineOut(BaseModel):
     is_current: bool = False
 
 
+class BaselinePatch(BaseModel):
+    effective_from: datetime | None = Field(
+        default=None,
+        description=(
+            "부착 일시. 이력 순서와 어느 촬영분에 적용되는지를 이 값이 정한다. "
+            "고치면 그 개소의 대체 관계를 다시 맞춘다."
+        ),
+    )
+
+
 class CaptureOut(BaseModel):
     id: int
     target_id: str

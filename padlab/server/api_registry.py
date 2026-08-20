@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func, select, update
@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 
 from . import naming, storage
 from .deps import get_root, get_session
-from .models import Baseline, Point, Target
+from .models import Baseline, Point, Reading, Target
 from .schemas import (
     BaselineOut,
+    BaselinePatch,
     ParsedUpload,
     PointIn,
     PointOut,
@@ -346,6 +347,71 @@ async def create_baseline(
     _resequence(session, resolved_point)
     session.commit()
     return _baseline_out(row)
+
+
+@router.patch("/baselines/{baseline_id}", response_model=BaselineOut, summary="기준 사진 수정")
+def patch_baseline(
+    baseline_id: int,
+    body: BaselinePatch,
+    session: Annotated[Session, Depends(get_session)],
+) -> BaselineOut:
+    """부착 일시를 고친다. 그 개소의 대체 관계를 다시 맞춘다.
+
+    사진 자체는 바꾸지 않는다. 다른 사진을 쓰려면 새로 등록한다 - 파일만
+    갈아 끼우면 이미 나온 판독값이 어느 사진과 견준 것인지 알 수 없게 된다.
+    """
+    row = session.get(Baseline, baseline_id)
+    if row is None:
+        raise HTTPException(404, f"없는 기준 사진이다: {baseline_id}")
+
+    changes = body.model_dump(exclude_unset=True)
+    moment = changes.get("effective_from")
+    if moment is not None:
+        row.effective_from = moment if moment.tzinfo else moment.replace(tzinfo=naming.KST)
+        _resequence(session, row.point_id)
+    session.commit()
+    return _baseline_out(row)
+
+
+@router.delete("/baselines/{baseline_id}", summary="기준 사진 삭제")
+def delete_baseline(
+    baseline_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    root: Annotated[object, Depends(get_root)],
+) -> dict[str, Any]:
+    """기준 사진 한 장을 지우고 그 개소의 대체 관계를 다시 맞춘다.
+
+    **이 기준으로 나온 판독이 남아 있으면 지우지 않는다.** 판독값은 이 사진과
+    견준 결과이고, 기준이 사라지면 그 값이 무엇과 견준 것인지 알 수 없게
+    된다. 판독을 먼저 지우고 오라고 알린다.
+    """
+    row = session.get(Baseline, baseline_id)
+    if row is None:
+        raise HTTPException(404, f"없는 기준 사진이다: {baseline_id}")
+
+    used = session.execute(
+        select(func.count()).select_from(Reading).where(Reading.baseline_id == baseline_id)
+    ).scalar_one()
+    if used:
+        raise HTTPException(
+            409,
+            f"이 기준으로 나온 판독이 {used}건 남아 있다. 그 판독을 먼저 지운다 - "
+            "기준이 사라지면 그 값이 무엇과 견준 것인지 알 수 없게 된다.",
+        )
+
+    point_id = row.point_id
+    path = storage.absolute(root, row.file_path)
+    session.delete(row)
+    session.flush()
+    _resequence(session, point_id)
+    session.commit()
+
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        # 파일을 못 지워도 기록은 지운다. 지운 척하고 목록에 남는 것이 더 나쁘다.
+        pass
+    return {"deleted": baseline_id, "point_id": point_id}
 
 
 def _resequence(session: Session, point_id: str) -> None:

@@ -206,6 +206,9 @@ tbody tr { background: var(--bg-surface); }
 tbody tr:hover { background: var(--bg-hover); }
 tbody tr.sel { background: var(--bg-selected); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* 가운데 정렬. num 뒤에 두어 숫자 열도 덮는다. 자릿수 정렬(tabular-nums)은
+   그대로 살려 소수점 자리가 흔들리지 않게 한다. */
+td.mid, th.mid { text-align: center; }
 /* 오른쪽 정렬 숫자 열 바로 뒤에 오는 열은 붙어 보인다. 그 사이를 벌린다. */
 td.apart, th.apart { padding-left: 32px; }
 /* 오독이 치명적인 값은 Medium 이상으로 낸다. */

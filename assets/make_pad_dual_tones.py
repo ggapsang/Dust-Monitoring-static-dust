@@ -117,11 +117,27 @@ TOP_BAND = (BORDER, 0.1750)
 ID_BOX = (0.3491, 0.0643, 0.6563, 0.1527)
 """POINT_ID 글자가 들어갈 자리. 기존 도안과 같다."""
 
-ANCHOR = 0.0640
-"""앵커 패치 한 변. 모서리 블록과 같은 크기로 맞췄다.
+ID_FONT = 132 / 1120
+"""번호 글자 크기. 패드 한 변 대비 비율이다.
+
+기존 도안(``make_pad.py``)이 1120px 패드에 132px 로 그린 것과 같은 값이다.
+상자 높이에서 끌어내던 것을 이 값으로 바꿨다 - 그렇게 하면 글자가 기존
+도안의 86% 로 작아졌고, 실촬영에서 글자 높이가 96px 대 82px 로 갈렸다.
+
+작으면 획이 얇아져 이진화에서 글자가 붙거나 끊긴다. 실제로 1084 의 8 과 4 가
+한 덩어리(폭 119px, 종횡비 1.43)로 붙어 118 로 읽혔고, 1085 는 획이 갉여
+9111 로 읽혔다.
+"""
+
+ANCHOR = 0.0600
+"""앵커 패치 한 변.
 
 작을수록 조명 기울기의 영향을 덜 받고, 클수록 노이즈가 잘 평균된다. 판독은
-중앙값을 쓰므로 가장자리 인쇄 번짐은 이 크기면 묻힌다.
+중앙값을 쓰므로 가장자리 인쇄 번짐은 이 크기면 묻힌다. 260px 로 찍힌 패드에서
+한 변이 약 16px 이라 중앙값을 낼 표본이 250개쯤 된다.
+
+모서리 블록(0.0643)보다 조금 작게 잡았다. 번호 상자와의 간격을 벌리기 위해
+줄인 것이다 - 아래 ID_CLEARANCE 를 보라.
 """
 
 ANCHOR_GAP = 0.0120
@@ -132,6 +148,21 @@ ANCHOR_Y = 0.0786
 
 LAMINATE_PAD = 0.0140
 """라미네이트 창 표시선이 앵커 바깥으로 물러날 거리."""
+
+ID_CLEARANCE = 0.0300
+"""라미네이트 표시선과 번호 상자 사이에 비워 둘 간격.
+
+앵커 쌍을 빈 구간 한가운데 놓으면 양쪽이 0.019 씩 남는데, 그 정도로는 정합이
+조금만 어긋나도 표시선이 번호 판독 영역으로 밀려 들어온다. 실촬영에서 그
+선이 숫자 하나로 세어져 1086 이 21986 으로 읽혔다. 판독기가 홀쭉한 조각을
+걸러 넘기지만 도안에서 떼어 놓는 편이 맞다.
+"""
+
+BLOCK_CLEARANCE = 0.0100
+"""모서리 블록과 라미네이트 표시선 사이 최소 간격.
+
+번호 쪽으로 간격을 벌리다 블록에 붙으면 이진화에서 한 덩어리가 된다.
+"""
 
 MARGIN = (BORDER, 0.1750, 1.0 - BORDER, 0.8036)
 """측정 여백. 인쇄물이 전혀 없는 구간이다. 패드 면적의 55%."""
@@ -159,16 +190,24 @@ def corner_blocks() -> dict[str, tuple[float, float, float, float]]:
 def anchor_pair_x0(side: str) -> float:
     """앵커 쌍의 시작 x.
 
-    모서리 블록과 POINT_ID 사이의 빈 구간 한가운데에 놓는다. 자리를 숫자로
-    박아 두면 글자 폭이나 블록 크기를 조금만 바꿔도 서로 붙어 버린다.
+    한가운데 놓지 않는다. 번호 상자 쪽으로 ``ID_CLEARANCE`` 를 먼저 확보하고
+    남는 만큼 모서리 블록 쪽으로 민다. 양쪽을 똑같이 나누면 번호 쪽 간격이
+    모자라 표시선이 판독 영역으로 밀려 들어온다.
+
+    자리를 숫자로 박아 두지 않는다. 글자 폭이나 블록 크기를 조금만 바꿔도
+    서로 붙어 버리므로 매번 계산한다.
     """
     blocks = corner_blocks()
-    if side == "left":
-        gap = (blocks["tl"][2], ID_BOX[0])
-    else:
-        gap = (ID_BOX[2], blocks["tr"][0])
     width = 2 * ANCHOR + ANCHOR_GAP
-    return (gap[0] + gap[1]) / 2 - width / 2
+    if side == "left":
+        block_edge, id_edge = blocks["tl"][2], ID_BOX[0]
+        x0 = id_edge - ID_CLEARANCE - LAMINATE_PAD - width
+        floor = block_edge + BLOCK_CLEARANCE + LAMINATE_PAD
+        return max(x0, floor)
+    block_edge, id_edge = blocks["tr"][0], ID_BOX[2]
+    x0 = id_edge + ID_CLEARANCE + LAMINATE_PAD
+    ceiling = block_edge - BLOCK_CLEARANCE - LAMINATE_PAD - width
+    return min(x0, ceiling)
 
 
 def anchor_rects(side: str) -> tuple[tuple, tuple]:
@@ -189,7 +228,17 @@ def anchor_rects(side: str) -> tuple[tuple, tuple]:
 # 렌더
 # --------------------------------------------------------------------------
 
+BUNDLED_FONT = Path(__file__).resolve().parent / "fonts" / "DejaVuSans-Bold.ttf"
+"""저장소에 넣어 둔 폰트. 인쇄와 판독이 같은 파일을 쓴다.
+
+앞서 후보 목록의 첫 줄이 리눅스 경로여서, 같은 코드가 리눅스에서는
+DejaVuSans-Bold 로 윈도우에서는 Arial Bold 로 찍었다. 한 현장에 서로 다른
+글꼴의 패드가 섞였고 Arial 이 더 얇아 획이 갉였다. 장비에 무엇이 깔려 있든
+같은 글꼴이 나오도록 저장소 안의 파일을 먼저 본다.
+"""
+
 FONT_CANDIDATES = (
+    str(BUNDLED_FONT),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "C:/Windows/Fonts/arialbd.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
@@ -254,8 +303,7 @@ def draw_pad(point_id: str, tone: str, path: Path, probe: bool = True) -> None:
         rect((x0, y0, x1, y1), outline=ink, width=max(1, round(length(0.0027))))
 
     # 4) POINT_ID
-    box_h = length(ID_BOX[3] - ID_BOX[1])
-    font = load_font(round(box_h * 1.15))
+    font = load_font(round(length(ID_FONT)))
     d.text(
         (px((ID_BOX[0] + ID_BOX[2]) / 2), px((ID_BOX[1] + ID_BOX[3]) / 2)),
         point_id, font=font, fill=ink, anchor="mm",
@@ -284,9 +332,15 @@ def print_spec() -> None:
         print(f"  앵커 {side:<5} 어두움 {tuple(round(v, 4) for v in dark)}")
         print(f"  앵커 {side:<5} 밝음   {tuple(round(v, 4) for v in light)}")
     lam = LAMINATE_PAD
-    left_edge = min(anchor_rects("left")) [0] - lam
+    left = anchor_rects("left")
+    left_edge = min(r[0] for r in left) - lam
+    right_edge = max(r[2] for r in left) + lam
     print(f"  블록~앵커 간격    {left_edge - blocks['tl'][2]:.4f}  "
           f"(라미네이트 표시선 기준)")
+    print(f"  앵커~번호 간격    {ID_BOX[0] - right_edge:.4f}  "
+          f"(라미네이트 표시선 기준)")
+    print(f"  번호 글자 크기    {round(length(ID_FONT))}px  "
+          f"(기존 도안과 같은 비율)")
     print(f"  선군 가로        {LINE_X}   (BR 자리 {round(1 - BLOCK_OFFSET - BLOCK, 4)}~ 를 비움)")
 
 
