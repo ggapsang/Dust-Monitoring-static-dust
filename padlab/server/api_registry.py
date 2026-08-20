@@ -345,7 +345,13 @@ async def create_baseline(
     # 부착 일시 순서로 대체 관계를 다시 맞춘다. 파일명의 회차 표기는 보지
     # 않는다 - 같은 정보를 두 곳에 두면 어긋났을 때 믿을 근거가 없다.
     _resequence(session, resolved_point)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        # DB 가 안 받아 준 파일은 남기지 않는다. 주인 없는 파일이 볼륨에
+        # 쌓이면 나중에 지워도 되는 것인지 사람이 알 방법이 없다.
+        storage.discard([path])
+        raise
     return _baseline_out(row)
 
 

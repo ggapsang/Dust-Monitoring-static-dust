@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -37,9 +38,27 @@ def sha256(data: bytes) -> str:
 
 
 def write(path: Path, data: bytes) -> Path:
+    """파일을 통째로 쓴다. 반쯤 쓰인 파일이 남지 않는다.
+
+    임시 이름으로 다 쓴 뒤 제자리로 옮긴다. 쓰다가 죽으면 임시 파일만 남고
+    본 이름은 아예 생기지 않는다 - 반쯤 쓰인 JPEG 이 제 이름으로 앉아 있으면
+    DB 에는 있는데 못 여는 파일이 되고, 그 사실이 판독할 때까지 드러나지
+    않는다.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
+    temp = path.with_name(path.name + ".part")
+    temp.write_bytes(data)
+    temp.replace(path)
     return path
+
+
+def discard(paths: Iterable[Path]) -> None:
+    """쓰다 만 파일을 치운다. DB 가 안 받아 준 파일은 남으면 안 된다."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def baseline_path(root: Path, point_id: str, baseline_id: int, suffix: str) -> Path:

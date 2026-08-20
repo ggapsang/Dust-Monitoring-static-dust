@@ -200,6 +200,7 @@ def _run(
     tone: str,
     overrides: dict[str, Any],
     visualize: bool,
+    expected_ids: list[str] | None = None,
 ):
     try:
         return read_pads(
@@ -209,6 +210,7 @@ def _run(
             config=_BASE_CONFIG,
             overrides=overrides,
             visualize=visualize,
+            expected_ids=expected_ids,
         )
     except ValueError as exc:
         # 설정 오타나 잘못된 값은 요청 잘못이다.
@@ -332,7 +334,13 @@ async def read_path(request: Request, body: ReadPathRequest) -> ReadResponse:
         baselines.append(image)
 
     result = await run_in_threadpool(
-        _run, reading, baselines, body.tone, body.config or {}, body.visualize
+        _run,
+        reading,
+        baselines,
+        body.tone,
+        body.config or {},
+        body.visualize,
+        body.expected_point_ids,
     )
     return to_response(
         result.to_dict(include_blobs=False),

@@ -196,19 +196,7 @@
     <p class="muted">톤은 개소마다 분진 색이 고정이라 여기서 정한다. 어두운 분진이면 white, 밝은 분진이면 black 이다.</p>
   </div>
   <div class="card">
-    <h3>촬영 단위와 개소</h3>
-    <div class="tgrid head">
-      <span>TARGET_ID</span><span>명칭</span><span>촬영 위치 설명</span><span></span>
-    </div>
-    <ul class="tree" id="tree"></ul>
-  </div>
-</section>
-
-<!-- 기준 사진 이력 ------------------------------------------------->
-<section class="view" id="view-baseline">
-  <h2>기준 사진</h2>
-  <div class="card">
-    <h3>등록</h3>
+    <h3>기준 사진 등록</h3>
     <div class="banner">
       <strong>기준 사진에는 패드를 하나만 담는다.</strong>
       여러 개가 담기면 그 패드들의 부착 시점이 한 장에 묶여, 나중에 하나만 갈아 붙였을 때 나머지 기준까지 새 시점으로 덮어쓰게 된다.
@@ -220,15 +208,28 @@
       <label class="field">시:분<input type="time" id="b-time" placeholder="00:00"></label>
       <button class="primary" id="b-go">등록</button>
     </div>
-    <p class="muted">시:분을 비우면 00시 00분으로 넣는다. 일자까지 비우면 파일명에서 읽는다. 새 기준을 넣으면 부착 일시 순서로 앞의 것이 대체 처리되고 이력에 남는다.</p>
+    <p class="muted">시:분을 비우면 00시 00분으로 넣는다. 일자까지 비우면 파일명에서 읽는다.</p>
   </div>
+  <div class="card">
+    <h3>촬영 단위와 개소</h3>
+    <div class="tgrid head">
+      <span>TARGET_ID</span><span>명칭</span><span>촬영 위치 설명</span><span></span>
+    </div>
+    <ul class="tree" id="tree"></ul>
+  </div>
+</section>
+
+<!-- 기준 사진 이력 ------------------------------------------------->
+<section class="view" id="view-baseline">
+  <h2>기준 사진 이력</h2>
   <div class="card">
     <div class="row">
       <label class="field grow">개소<select id="h-point"><option value="">전체</option></select></label>
       <label style="display:flex; gap:8px; align-items:center; font-size:14px">
         <input type="checkbox" id="h-thumb" checked><span>사진 함께 보기</span></label>
-      <button class="secondary" id="h-load">불러오기</button>
+      <button class="secondary" id="h-load">새로고침</button>
     </div>
+    <p class="muted">개소마다 기준 사진이 언제 무엇으로 바뀌어 왔는지. 판독값이 어느 기준과 견준 것인지는 부착 일시가 정한다.</p>
   </div>
   <div id="h-body"></div>
 </section>

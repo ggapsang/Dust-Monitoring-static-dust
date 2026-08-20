@@ -110,6 +110,49 @@ def _correlate(candidate: np.ndarray, template: np.ndarray) -> float:
     return float((a * b).sum() / denominator)
 
 
+def extract_glyphs(
+    rectified_gray: np.ndarray,
+    spec: PadSpec,
+    tone: str,
+    cfg: PointIdConfig,
+    pad_size_px: int,
+) -> list[np.ndarray]:
+    """번호 영역에서 잘라 낸 글자 후보들. 크기를 맞춰 놓은 마스크다.
+
+    열린 판독과 닫힌 판독이 같은 재료를 쓴다. 두 번 자르면 한쪽만 고쳤을 때
+    조용히 갈린다.
+    """
+    patch = crop(rectified_gray, spec.point_id_box, pad_size_px)
+    if patch.size == 0:
+        return []
+    binary = _binarize(patch, tone)
+    boxes = _components(binary)
+    return [_fit(binary[y : y + h, x : x + w]) for x, y, w, h in boxes]
+
+
+def match_score(glyphs: list[np.ndarray], candidate: str, cfg: PointIdConfig) -> float:
+    """이 글자들이 후보 번호와 얼마나 닮았는지. 0~1.
+
+    자릿수가 다르면 애초에 그 번호가 아니다. 폰트는 후보마다 가장 잘 맞는
+    것을 쓴다 - 한 현장에 서로 다른 글꼴의 패드가 섞여 있기 때문이다.
+    """
+    if not glyphs or len(glyphs) != len(candidate):
+        return -1.0
+
+    best = -1.0
+    for font_path in [*find_fonts(cfg.font_dir), None]:
+        templates = {
+            digit: _fit(glyph)
+            for digit, glyph in digit_templates(TEMPLATE_HEIGHT, font_path).items()
+        }
+        scores = [
+            _correlate(glyph, templates[digit])
+            for glyph, digit in zip(glyphs, candidate)
+        ]
+        best = max(best, float(np.mean(scores)))
+    return best
+
+
 def read_point_id(
     rectified_gray: np.ndarray,
     spec: PadSpec,

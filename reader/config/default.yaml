@@ -154,6 +154,9 @@ point_id:
   # 내장 스트로크 폰트로 돈다. 실제 인쇄에 쓴 폰트를 넣어 두면 판독률이
   # 올라간다. 자세한 것은 assets/fonts/README.md 에 있다.
   font_dir: ../assets/fonts
+  # 후보 목록을 받아 닫힌 판독을 할 때, 배정하려면 이만큼은 닮아야 한다.
+  # 실촬영에서 맞게 읽힌 건이 0.32~0.45 였다. null 이면 하한 없음.
+  assign_min_score: 0.15
 
 service:
   host: 0.0.0.0

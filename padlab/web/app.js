@@ -692,11 +692,19 @@ async function loadRuns() {
 
 async function loadBaselineHistory() {
   const point = $('#h-point').value;
-  const rows = await api(`/api/baselines${point ? `?point_id=${encodeURIComponent(point)}` : ''}`);
+  const [rows, readings] = await Promise.all([
+    api(`/api/baselines${point ? `?point_id=${encodeURIComponent(point)}` : ''}`),
+    api('/api/readings?limit=5000'),
+  ]);
   if (!rows.length) {
     $('#h-body').innerHTML = '<div class="card empty">등록된 기준 사진이 없다.</div>';
     return;
   }
+
+  // 어느 기준으로 몇 건이 나왔는지. 기준을 갈아 붙인 뒤 값이 어떻게
+  // 이어졌는지를 보려면 기간과 함께 이 수가 보여야 한다.
+  const used = {};
+  readings.forEach((r) => { if (r.baseline_id) used[r.baseline_id] = (used[r.baseline_id] || 0) + 1; });
 
   const thumbs = $('#h-thumb').checked;
   const byPoint = {};
@@ -709,28 +717,32 @@ async function loadBaselineHistory() {
       // 그것으로 줄을 세우지 않는다.
       const ordered = [...list].sort((a, b) => a.effective_from.localeCompare(b.effective_from));
       const info = state.points.find((p) => p.point_id === pointId);
+      const changes = ordered.length - 1;
+
       return `<div class="card">
         <div class="row" style="justify-content:space-between; align-items:center">
           <h3 style="margin:0">${escape(pointId)}
             <span class="muted">${escape(info ? (info.name || '') : '')}</span></h3>
-          <span class="badge neutral"><i class="dot"></i>이력 ${ordered.length}건</span>
+          <span class="badge neutral"><i class="dot"></i>${changes ? `${changes}번 교체` : '교체 없음'}</span>
         </div>
         <div class="scroll"><table>
           <thead><tr>
-            <th class="plain">회차</th><th class="plain">상태</th>
-            <th class="plain">부착 일시</th><th class="plain">대체된 일시</th>
-            <th class="plain">등록 일시</th><th class="plain">원본 파일명</th>
+            <th class="plain">회차</th>
+            <th class="plain">적용 기간</th>
+            <th class="plain">교체일</th>
+            <th class="plain">사용 일수</th>
+            <th class="plain">이 기준으로 나온 판독</th>
+            <th class="plain">원본 파일명</th>
             ${thumbs ? '<th class="plain">사진</th>' : ''}
             <th class="plain actcell"></th>
           </tr></thead>
           <tbody>${ordered.map((row, index) => `<tr>
-            <td class="key">${index + 1}</td>
-            <td>${row.is_current
-              ? '<span class="badge ok"><i class="dot"></i>현행</span>'
-              : '<span class="badge neutral"><i class="dot"></i>대체됨</span>'}</td>
-            <td>${stamp(row.effective_from)}</td>
-            <td>${row.superseded_at ? stamp(row.superseded_at) : '—'}</td>
-            <td class="muted">${stamp(row.registered_at)}</td>
+            <td class="key">${index + 1}회차 ${row.is_current
+              ? '<span class="badge ok"><i class="dot"></i>현행</span>' : ''}</td>
+            <td>${day(row.effective_from)} → ${row.superseded_at ? day(row.superseded_at) : '지금'}</td>
+            <td class="key">${index ? day(row.effective_from) : '<span class="tnone">최초</span>'}</td>
+            <td>${span(row.effective_from, row.superseded_at)}</td>
+            <td>${used[row.id] || 0}건</td>
             <td class="muted">${escape(row.original_name || '—')}</td>
             ${thumbs ? `<td><a href="/files/${escape(row.file_path)}" target="_blank">
               <img src="/files/${escape(row.file_path)}" loading="lazy"
@@ -744,6 +756,22 @@ async function loadBaselineHistory() {
         </table></div>
       </div>`;
     }).join('');
+}
+
+/** 날짜만. 이력은 '며칠에 바뀌었나' 가 알고 싶은 것이라 시:분을 접는다. */
+function day(iso) {
+  if (!iso) return '—';
+  const at = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+}
+
+/** 그 기준이 쓰인 기간. 현행이면 지금까지로 센다. */
+function span(from, until) {
+  const start = new Date(from).getTime();
+  const end = until ? new Date(until).getTime() : Date.now();
+  const days = Math.max(0, Math.round((end - start) / 86400000));
+  return until ? `${days}일` : `${days}일째`;
 }
 
 // ── 등록 ────────────────────────────────────────────────────────────

@@ -22,14 +22,15 @@ AMR 의 촬영 위치와 각도가 포인트마다 고정되어 있으므로 두
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from itertools import permutations
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 import cv2
 import numpy as np
 
-from .config import Config, load_config
+from .config import Config, PointIdConfig, load_config
 from .detect import Detection, detect_pads
 from .dust import DustMap, extract_dust
 from .normalize import normalize
@@ -39,7 +40,7 @@ from .rectify import rectify
 from .result import FailureReason, PadReadBatch, PadReadResult, QualityMetrics
 from .score import compute_scores
 from .spec import PadSpec, get_spec
-from .point_id import read_point_id
+from .point_id import extract_glyphs, match_score, read_point_id
 from .visualize import draw_distribution
 
 ORIENT_PREVIEW_PX = 512
@@ -59,6 +60,15 @@ class _Analysis:
     point_id: str | None
     point_id_status: Any
     point_id_confidence: float | None
+    point_id_raw: str | None = None
+    """열린 판독으로 읽은 번호. 후보에 배정해 ``point_id`` 가 바뀌어도 남는다.
+
+    나중에 오독이 몇 건이었는지 세려면 배정 결과와 실제로 읽은 값이 따로
+    있어야 한다.
+    """
+
+    glyphs: list[Any] = field(default_factory=list)
+    """번호 영역에서 잘라 낸 글자 마스크. 후보 배정에 쓴다."""
 
 
 def load_image(image: Any) -> np.ndarray | None:
@@ -158,9 +168,62 @@ def _analyze(
             point_id=target_value,
             point_id_status=target_status,
             point_id_confidence=target_confidence,
+            point_id_raw=target_value,
+            glyphs=extract_glyphs(rectified_gray, spec, tone, cfg.point_id, size),
         ),
         None,
     )
+
+
+def assign_ids(
+    readings: list[_Analysis], candidates: list[str], cfg: PointIdConfig
+) -> None:
+    """찍힌 패드들을 후보 번호에 배정한다. 닫힌 판독이다.
+
+    열린 판독은 자리마다 0~9 중 가장 닮은 것을 고른다. 네 자리면 경우의 수가
+    1만 개라, 한 자리만 흔들려도 있지도 않은 번호가 나온다 - 실촬영에서 1081
+    이 1011 로, 1086 이 1088 로 읽혔다. 자리당 정확도가 99% 여도 네 자리를
+    다 맞출 확률은 96% 이고, 개소가 1000개면 40건이 틀린다.
+
+    그런데 그 사진에 무엇이 찍혔는지는 부르는 쪽이 이미 안다. 후보 안에서
+    고르면 없는 번호가 나올 수 없고, 패드와 후보를 **통째로** 짝지으면 서로
+    밀어내며 제자리를 찾는다. 실촬영 10건에서 열린 판독 7건, 닫힌 판독
+    10건이 맞았다.
+
+    자리마다 따로 고르지 않고 배정 전체의 점수 합으로 정한다. 한 패드가
+    욕심내 가져간 번호 때문에 다른 패드가 밀리는 것을 막는다.
+
+    후보 중 가장 나은 것이라도 ``assign_min_score`` 에 못 미치면 배정하지
+    않는다. 엉뚱한 자리에 붙인 패드나 오검출된 사각형이 조용히 어느 개소로
+    배정되는 것이 실패보다 나쁘다.
+    """
+    if not readings or not candidates:
+        return
+
+    floor = cfg.assign_min_score
+    table = [[match_score(r.glyphs, c, cfg) for c in candidates] for r in readings]
+
+    best_total = None
+    best_plan: tuple[int | None, ...] = ()
+    width = min(len(readings), len(candidates))
+    for picked in permutations(range(len(candidates)), width):
+        plan: list[int | None] = list(picked) + [None] * (len(readings) - width)
+        total = sum(
+            table[i][j] for i, j in enumerate(plan) if j is not None
+        )
+        if best_total is None or total > best_total:
+            best_total, best_plan = total, tuple(plan)
+
+    # 자리 번호로 찾는다. dataclass 를 값으로 비교하면 안에 든 이미지 배열까지
+    # 견주게 되어 터진다.
+    for index, choice in enumerate(best_plan):
+        if choice is None:
+            continue
+        score = table[index][choice]
+        if floor is not None and score < floor:
+            continue
+        readings[index].point_id = candidates[choice]
+        readings[index].point_id_confidence = score
 
 
 def read_pads(
@@ -170,6 +233,7 @@ def read_pads(
     config: Config | None = None,
     overrides: Mapping[str, Any] | None = None,
     visualize: bool = False,
+    expected_ids: list[str] | None = None,
 ) -> PadReadBatch:
     """기준 사진과 견주어 판독 사진에 찍힌 **모든** 패드의 오염도를 낸다.
 
@@ -243,6 +307,12 @@ def read_pads(
         return finish(PadReadBatch.failed(
             FailureReason.PAD_NOT_FOUND, "판독 이미지에서 패드를 판독하지 못했다"))
 
+    # 후보를 받았으면 그 안에서 배정한다. 기준 사진 쪽도 같이 배정해야
+    # 짝짓기가 성립한다 - 한쪽만 배정하면 번호가 서로 다른 축이 된다.
+    if expected_ids:
+        assign_ids(readings, list(expected_ids), cfg.point_id)
+        assign_ids(bases, list(expected_ids), cfg.point_id)
+
     pads = [
         _compare(reading, _match(reading, readings, bases), cfg, spec, visualize)
         for reading in readings
@@ -284,6 +354,7 @@ def _compare(
         "rotation_deg": reading.rotation_deg,
         "rotation_margin": reading.rotation_margin,
         "point_id": reading.point_id,
+        "point_id_raw": reading.point_id_raw,
         "point_id_status": reading.point_id_status,
         "point_id_confidence": reading.point_id_confidence,
     }
@@ -359,10 +430,13 @@ def read_pad(
     config: Config | None = None,
     overrides: Mapping[str, Any] | None = None,
     visualize: bool = False,
+    expected_ids: list[str] | None = None,
 ) -> PadReadResult:
     """가장 크게 찍힌 패드 하나만 돌려준다.
 
     한 장에 패드가 하나만 찍히는 흔한 경우를 위한 지름길이다. 여러 개가 찍힐
     수 있는 사진이면 ``read_pads`` 를 쓴다.
     """
-    return read_pads(image, baseline, pad_tone, config, overrides, visualize).first
+    return read_pads(
+        image, baseline, pad_tone, config, overrides, visualize, expected_ids
+    ).first

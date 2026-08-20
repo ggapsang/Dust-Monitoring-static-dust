@@ -38,6 +38,16 @@ class ReadPathRequest(BaseModel):
             "끄면 이미지를 만들지 않아 조금 빨라진다."
         ),
     )
+    expected_point_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "이 사진에 있을 개소 번호 목록. 주면 **닫힌 판독**을 한다 - 숫자를 "
+            "0~9 중에서 자유롭게 읽는 대신 이 후보 안에서 배정한다. 네 자리를 "
+            "자유롭게 읽으면 경우의 수가 1만 개라 한 자리만 흔들려도 없는 번호가 "
+            "나오는데, 후보를 주면 그런 답이 아예 나올 수 없다. 실촬영 10건에서 "
+            "열린 판독 7건, 닫힌 판독 10건이 맞았다."
+        ),
+    )
     config: dict[str, Any] | None = Field(
         default=None,
         description="설정 일부 덮어쓰기. 비워 두면 서버 설정을 그대로 쓴다.",
@@ -89,6 +99,14 @@ class PadResult(BaseModel):
 
     success: bool
     summary: str = Field(description="이 패드 한 줄 요약")
+    point_id_raw: str | None = Field(
+        default=None,
+        description=(
+            "숫자를 그대로 읽은 값. 후보를 받아 배정했으면 point_id 와 다를 수 "
+            "있다. 오독이 몇 건이었는지 나중에 세려면 배정 결과와 실제로 읽은 "
+            "값이 따로 있어야 한다."
+        ),
+    )
     point_id: str | None = Field(
         default=None,
         description=(
@@ -244,6 +262,7 @@ def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
         success=pad["success"],
         summary=pad_summary(pad),
         point_id=pad.get("point_id"),
+        point_id_raw=pad.get("point_id_raw"),
         scores=ScoresModel(
             uniform=_r(scores.get("uniform")),
             localized=_r(scores.get("localized")),

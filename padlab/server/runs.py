@@ -158,7 +158,12 @@ def store_reading(
     payload: dict[str, Any],
     frames: dict[str, bytes],
 ) -> Reading:
-    """패드 하나의 결과를 저장한다. 이미지 복사가 실패해도 값은 남긴다."""
+    """패드 하나의 결과를 저장한다. 이미지 복사가 실패해도 값은 남긴다.
+
+    ``read_point_id`` 에는 숫자를 그대로 읽은 값을 넣는다. 닫힌 판독에서는
+    판독기가 후보에 배정한 값과 다를 수 있고, 오독이 몇 건이었는지 세려면
+    배정 결과와 실제로 읽은 값이 따로 있어야 한다.
+    """
     read_point = pad.get("point_id")
     baseline = pair_baseline(job.baselines, read_point)
     scores = pad.get("scores") or {}
@@ -182,7 +187,7 @@ def store_reading(
         quality_saturated_ratio=quality.get("saturated_ratio"),
         quality_pad_size_px=quality.get("pad_size_px"),
         quality_pad_size_diff_ratio=quality.get("pad_size_diff_ratio"),
-        read_point_id=read_point,
+        read_point_id=pad.get("point_id_raw") or read_point,
         elapsed_ms=payload.get("elapsed_ms"),
         response=pad,
         created_at=datetime.now(timezone.utc),
@@ -265,7 +270,7 @@ async def process_capture(
     for tone, image_path, baseline_paths, baseline_ids, point_ids in plans:
         try:
             outcome = await client.read_path(
-                image_path, baseline_paths, tone, overrides
+                image_path, baseline_paths, tone, overrides, point_ids
             )
         except Exception as exc:  # noqa: BLE001 - 사진 한 장의 실패로 다룬다
             _note(session_factory, run_id, capture_id, tone, "read_failed", str(exc)[:400])
@@ -282,10 +287,13 @@ async def process_capture(
                 baselines=[session.get(Baseline, bid) for bid in baseline_ids],
             )
             pads = outcome.payload.get("pads") or []
+            saved: list[Reading] = []
             for index, pad in enumerate(pads):
                 frames = outcome.images[index] if index < len(outcome.images) else {}
-                store_reading(
-                    session, root, run_id, job, index, pad, outcome.payload, frames
+                saved.append(
+                    store_reading(
+                        session, root, run_id, job, index, pad, outcome.payload, frames
+                    )
                 )
             if not pads:
                 run = session.get(Run, run_id)
@@ -302,7 +310,14 @@ async def process_capture(
                             }
                         ],
                     )
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                # DB 가 안 받아 준 결과 이미지는 남기지 않는다. 어느 판독의
+                # 것인지 가리키는 행이 없으면 지워도 되는지 알 수 없다.
+                for row in saved:
+                    storage.remove_tree(storage.result_dir(root, row.id))
+                raise
 
     with session_factory() as session:
         run = session.get(Run, run_id)

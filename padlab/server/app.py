@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import api_readings, api_registry, api_runs
+from .audit import audit
 from .config import load_settings
 from .db import apply_migrations, make_engine, make_session_factory
 from .deps import get_root
@@ -48,6 +49,22 @@ async def lifespan(app: FastAPI):
     app.state.reader_health = health
     app.state.reader_config = config
     app.state.migrations = applied
+
+    # DB 와 파일 저장소가 맞는지 기동할 때 한 번 훑는다. 어긋난 채로 돌면
+    # 판독할 때가 되어서야 드러나는데, 그때는 사진을 이미 올린 뒤다.
+    with app.state.session_factory() as session:
+        app.state.audit = audit(session, settings.data_dir)
+    report = app.state.audit
+    if report["in_sync"]:
+        print("[padlab] 저장소 점검: DB 와 파일이 맞는다")
+    else:
+        print(
+            f"[padlab] 저장소 점검: 파일 없음 {len(report['missing_files'])}건, "
+            f"주인 없는 파일 {len(report['orphan_files'])}건"
+        )
+        for line in report["missing_files"][:20] + report["orphan_files"][:20]:
+            print(f"[padlab]   {line}")
+
     try:
         yield
     finally:
@@ -67,7 +84,18 @@ app.include_router(api_readings.router)
 
 @app.get("/healthz", tags=["운영"], summary="기동 확인")
 def healthz() -> dict[str, Any]:
-    return {"status": "ok"}
+    """기동 여부와 저장소 점검 결과.
+
+    점검은 기동할 때 한 번 한 것이다. 경로만 DB 에 두고 실물은 볼륨에 두는
+    구조라 둘이 어긋날 수 있어, 어긋났으면 여기서 바로 보이게 한다.
+    """
+    report = getattr(app.state, "audit", None) or {}
+    return {
+        "status": "ok",
+        "storage_in_sync": report.get("in_sync"),
+        "missing_files": report.get("missing_files", []),
+        "orphan_files": report.get("orphan_files", []),
+    }
 
 
 @app.get("/api/reader/config", tags=["운영"], summary="판독기 적용 설정")

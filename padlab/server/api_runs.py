@@ -129,7 +129,13 @@ async def create_run(
         ignore_baseline_window=ignore_baseline_window,
     )
     session.add(run)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        # DB 가 안 받아 준 사진은 남기지 않는다. 주인 없는 파일이 볼륨에
+        # 쌓이면 나중에 지워도 되는 것인지 사람이 알 방법이 없다.
+        storage.discard(written)
+        raise
 
     background.add_task(
         runs.execute_run,

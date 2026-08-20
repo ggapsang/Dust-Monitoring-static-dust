@@ -225,6 +225,13 @@ class PadReadResult:
     point_id_status: PointIdStatus = PointIdStatus.DISABLED
     point_id_confidence: float | None = None
 
+    point_id_raw: str | None = None
+    """열린 판독으로 읽은 번호. 후보에 배정했으면 ``point_id`` 와 다를 수 있다.
+
+    나중에 오독이 몇 건이었는지 세려면 배정 결과와 실제로 읽은 값이 따로
+    있어야 한다.
+    """
+
     pad_size_diff_ratio: float | None = None
     """기준 이미지와 판독 이미지의 패드 크기 차이 비율."""
 
@@ -262,6 +269,7 @@ class PadReadResult:
             "quality": self.quality.to_dict(),
             "normalization": self.normalization.to_dict(),
             "point_id": self.point_id,
+            "point_id_raw": self.point_id_raw,
             "point_id_status": self.point_id_status.value,
             "point_id_confidence": _f(self.point_id_confidence),
             "pad_tone": self.pad_tone,
