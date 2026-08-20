@@ -3,8 +3,12 @@
  * 색은 시맨틱 토큰으로만 참조한다. 원시 팔레트를 컴포넌트에서 직접 쓰지
  * 않는다. 간격·크기는 4px 스케일에서만 고른다.
  *
- * 다크가 제품 기본값이고 라이트는 반전이 아니다 - 다크는 면을 밝혀 깊이를
- * 만들고, 라이트는 배경이 이미 최상단 밝기라 그림자와 경계선으로 나눈다.
+ * 두 테마가 같은 토큰명을 쓰고 값만 달라진다. 라이트는 다크의 반전이 아니다 -
+ * 다크는 면을 밝혀 깊이를 만들고, 라이트는 배경이 이미 최상단 밝기라 그림자와
+ * 경계선으로 나눈다.
+ *
+ * 디자인 시스템의 제품 기본값은 다크지만 이 화면은 라이트로 연다. 사무실
+ * 주간 사용이고 표를 오래 들여다보는 화면이라서다.
  */
 
 :root {
@@ -179,10 +183,17 @@ button:disabled { background: var(--bg-disabled); color: var(--text-disabled); c
 
 /* ── 표 ───────────────────────────────────────────────────── */
 
-.scroll { overflow-x: auto; }
+/* 표를 감싸는 스크롤 컨테이너.
+ *
+ * 머리글의 sticky 기준은 페이지가 아니라 **이 컨테이너**다. overflow 를 준
+ * 조상이 생기는 순간 그쪽이 기준이 되기 때문이다. 그래서 상단바 높이만큼
+ * top 을 주면 머리글이 그만큼 아래로 내려가 행 사이에 얹힌다. top 은 0 이고,
+ * 대신 컨테이너에 높이를 줘서 표 안에서 세로로 스크롤되게 한다. */
+.scroll { overflow: auto; }
+.scroll.tall { max-height: calc(100vh - 15rem); }
 table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 20px; }
 thead th {
-  position: sticky; top: 56px;
+  position: sticky; top: 0; z-index: 1;
   background: var(--bg-header); color: var(--text-tertiary);
   font-size: 12px; font-weight: 500; text-align: left;
   padding: 8px 10px; white-space: nowrap;

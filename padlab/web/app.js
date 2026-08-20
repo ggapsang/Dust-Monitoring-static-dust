@@ -538,8 +538,10 @@ function bind() {
 }
 
 async function boot() {
+  // 기본은 라이트다. 디자인 시스템의 기본값은 다크지만 이 화면은 사무실
+  // 주간 사용이라 라이트로 연다. 고른 값은 브라우저에 남는다.
   const saved = localStorage.getItem('padlab-theme');
-  if (saved) { document.documentElement.dataset.theme = saved; }
+  document.documentElement.dataset.theme = saved || 'light';
   $('#theme').textContent = document.documentElement.dataset.theme === 'dark' ? '라이트' : '다크';
 
   bind();
