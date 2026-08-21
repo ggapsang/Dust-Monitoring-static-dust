@@ -15,6 +15,8 @@ const state = {
   selected: new Set(),
   // 열마다의 필터와 정렬. 엑셀처럼 열 이름을 눌러 정한다.
   colFilters: {},
+  // 개소 보기에서 펼쳐 놓은 개소. null 이면 목록 화면이다.
+  point: null,
   // 정렬 키를 순서대로 담는다. 앞의 것이 우선이고, 값이 같을 때 뒤의 것으로
   // 가른다. 하나만 담으면 단일 정렬과 같다.
   sort: [{ key: 'captured_at', desc: true }],
@@ -408,29 +410,175 @@ function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
-// ── 상세 ────────────────────────────────────────────────────────────
+// ── 개소 보기 ───────────────────────────────────────────────────────
+//
+// 회차별 사진과 지표 추이를 한 화면에 둔다. 실증에서 가장 자주 하는 일이
+// "이 개소가 회차를 거치며 어떻게 더러워졌나" 인데, 사진과 숫자가 다른
+// 화면에 있으면 둘을 번갈아 보며 회차를 손으로 맞춰야 한다.
+//
+// 사진은 작게 늘어놓는다. 회차를 위아래로 이어 볼 때 한 줄에 여러 장이
+// 들어와야 비교가 되고, 한 장을 크게 볼 일은 그때뿐이라 눌러서 띄운다.
 
-async function openDetail(id) {
-  const row = await api(`/api/readings/${id}`);
-  location.hash = '#detail';
-  $('#d-body').innerHTML = detailCard(row, true);
+/** 개소 목록. 여기서 고르면 그 개소의 회차가 펼쳐진다.
+ *
+ * 최근 값만으로는 이 개소가 나빠지는 중인지 알 수 없다. 같은 0.05 라도
+ * 직전에 0.01 이었으면 급히 오른 것이고 0.06 이었으면 잦아든 것이다.
+ * 그래서 변화량을 함께 낸다.
+ */
+async function loadPointList() {
+  const rows = await api('/api/readings?limit=5000');
+
+  // 개소마다 성공한 건만 촬영 순으로 모은다. 실패 건은 값이 없어 추세를
+  // 왜곡한다 - 없는 값을 0 으로 치면 급락한 것처럼 보인다.
+  const series = {};
+  [...rows]
+    .filter((row) => row.point_id && row.success && row.score_combined !== null)
+    .sort((a, b) => (a.captured_at || '').localeCompare(b.captured_at || ''))
+    .forEach((row) => { (series[row.point_id] ||= []).push(row); });
+
+  const latest = {};
+  rows.forEach((row) => {
+    if (!row.point_id) return;
+    const slot = latest[row.point_id];
+    if (!slot || (row.captured_at || '') > (slot.captured_at || '')) latest[row.point_id] = row;
+  });
+
+  const body = $('#t-points tbody');
+  body.innerHTML = state.points.map((point) => {
+    const line = series[point.point_id] || [];
+    const last = latest[point.point_id];
+
+    // 추세는 **지금 기준 안에서만** 낸다. 값이 '그 기준 대비 쌓인 양' 이라
+    // 패드를 갈아 붙이면 척도가 바뀌고 침착도 0 에서 다시 시작한다. 기준이
+    // 다른 회차와 이어서 빼면 큰 폭의 하락으로 보이는데 실제로는 갈았을
+    // 뿐이다. 전체 회차 수는 그것대로 의미가 있어 따로 낸다.
+    const currentBaseline = line.length ? line[line.length - 1].baseline_id : null;
+    const window = line.filter((r) => r.baseline_id === currentBaseline);
+    const values = window.map((r) => r.score_combined);
+    const n = values.length;
+    const recent = n ? values[n - 1] : null;
+    const step = n >= 2 ? recent - values[n - 2] : null;
+    const total = n >= 2 ? recent - values[0] : null;
+    const mean = n >= 2 ? total / (n - 1) : null;
+
+    return `<tr data-point="${escape(point.point_id)}">
+      <td class="key">${escape(point.point_id)}</td>
+      <td>${escape(point.name || '—')}</td>
+      <td class="mid">${escape(point.target_id)}</td>
+      <td class="mid"><span class="badge neutral"><i class="dot"></i>${escape(point.tone)}</span></td>
+      <td class="mid">${point.has_baseline
+        ? '<span class="badge ok"><i class="dot"></i>있음</span>'
+        : '<span class="badge warn"><i class="dot"></i>없음</span>'}</td>
+      <td class="num mid">${line.length}</td>
+      <td class="num mid">${n}${line.length > n ? ' <span class="badge info" title="이 개소는 패드를 갈아 붙인 적이 있다. 추세는 지금 기준 안에서만 낸다"><i class="dot"></i>교체</span>' : ''}</td>
+      <td class="num mid key">${recent === null ? '—' : num(recent)}</td>
+      <td class="num mid">${trend(step)}</td>
+      <td class="num mid">${trend(mean)}</td>
+      <td class="num mid">${trend(total)}</td>
+      <td class="mid">${last ? stamp(last.captured_at) : '—'}</td>
+    </tr>`;
+  }).join('');
+  $('#p-list-empty').style.display = state.points.length ? 'none' : 'block';
+
+  $$('#t-points tbody tr').forEach((tr) =>
+    tr.addEventListener('click', () => showPoint(tr.dataset.point).catch((e) => toast(e.message, true))));
 }
 
-function detailCard(row, full) {
+/** 변화량 한 칸. 방향을 색이 아니라 기호로 낸다.
+ *
+ * 색만으로 상태를 전하지 않는 것이 규칙이고, 흑백으로 뽑거나 색을 못 가리는
+ * 사람이 봐도 오르내림이 읽혀야 한다.
+ */
+function trend(value) {
+  if (value === null || value === undefined) return '<span class="tnone">—</span>';
+  if (Math.abs(value) < 0.0005) return `<span class="muted">${num(value)}</span>`;
+  const up = value > 0;
+  return `<span class="badge ${up ? 'warn' : 'ok'}"><i class="dot"></i>${up ? '▲' : '▼'} ${num(Math.abs(value))}</span>`;
+}
+
+function backToList() {
+  state.point = null;
+  $('#p-list-wrap').hidden = false;
+  $('#p-detail').hidden = true;
+}
+
+/** 개소 하나를 펼친다. 목록을 감추고 상세로 넘어간다. */
+async function showPoint(pointId) {
+  state.point = pointId;
+  const info = state.points.find((p) => p.point_id === pointId);
+  $('#p-title').innerHTML = `${escape(pointId)} <span class="muted">${escape(info ? (info.name || '') : '')}</span>`;
+  $('#p-list-wrap').hidden = true;
+  $('#p-detail').hidden = false;
+  await loadPoint();
+}
+
+async function loadPoint() {
+  const point = state.point;
+  if (!point) return;
+
+  const params = new URLSearchParams({
+    metric: $('#p-metric').value,
+    slack: $('#p-slack').value || '0',
+  });
+  if ($('#p-n').value) params.set('mad_n', $('#p-n').value);
+
+  const [rows, series] = await Promise.all([
+    api(`/api/readings?point_id=${encodeURIComponent(point)}&order=captured_at&desc=false&limit=500`),
+    api(`/api/series/${encodeURIComponent(point)}?${params}`).catch(() => null),
+  ]);
+
+  if (!rows.length) {
+    $('#p-charts').innerHTML = '';
+    $('#p-body').innerHTML = '<div class="card empty">판독 결과가 없다.</div>';
+    return;
+  }
+  drawPointCharts(series);
+
+  // 회차 순으로 위에서 아래로. 옆에 지표를 붙여 사진과 숫자를 한눈에 본다.
+  $('#p-body').innerHTML = rows.map((row) => pointCard(row)).join('');
+}
+
+function drawPointCharts(series) {
+  if (!series || !series.points.length) { $('#p-charts').innerHTML = ''; return; }
+  const at = (key) => series.points.map((p) => p[key]);
+  const seq = series.points.map((p) => p.sequence);
+  // 기준이 바뀐 자리. 그 앞뒤는 척도가 달라 선으로 이으면 안 된다.
+  const cuts = series.points
+    .map((p, i) => (p.baseline_changed ? i : -1))
+    .filter((i) => i >= 0);
+  const notice = cuts.length
+    ? `<p class="muted">기준 사진이 ${cuts.length}번 바뀌었다. 바뀐 자리에 세로선을 그었고, 그 앞뒤는 척도가 달라 증분과 누적을 잇지 않는다.</p>`
+    : '';
+  $('#p-charts').innerHTML = `
+    <div class="card"><h3>절대량 · 그 회차의 기준 대비 총량</h3>
+      ${lineChart(at('absolute'), seq, null, false, cuts)}${notice}</div>
+    <div class="card"><h3>추세 · 직전 회차 대비 증분</h3>
+      ${lineChart(at('delta'), seq, series.limit, false, cuts)}
+      <p class="muted">증분 중앙값 ${num(series.delta_median, 4)} · MAD ${num(series.delta_mad, 4)}${
+        series.limit === null || series.limit === undefined
+          ? ' · 경계 배수 n 을 넣으면 경계선을 그린다'
+          : ` · 경계 ${num(series.limit, 4)}`}</p></div>
+    <div class="card"><h3>누적 · 증분에서 여유를 뺀 값의 합</h3>
+      ${lineChart(at('cusum'), seq, null, true, cuts)}</div>`;
+}
+
+function pointCard(row) {
   const shot = (src, caption) =>
-    src ? `<figure class="shot"><img src="${src}" loading="lazy"><figcaption>${caption}</figcaption></figure>` : '';
+    src ? `<figure class="shot"><img src="${src}" loading="lazy" alt="${escape(caption)}"><figcaption>${caption}</figcaption></figure>` : '';
   const images = row.images || {};
-  const override = full && row.config_override && Object.keys(row.config_override).length
-    ? `<p class="muted">적용된 설정 오버라이드 <code>${escape(JSON.stringify(row.config_override))}</code></p>` : '';
-  return `<div class="card">
-    <div class="row" style="justify-content:space-between">
-      <h3>${escape(row.point_id || '개소 미상')} · ${row.sequence ? `${row.sequence}회차` : ''} · ${stamp(row.captured_at)}</h3>
+  return `<div class="card" data-card="${row.id}">
+    <div class="row" style="justify-content:space-between; align-items:center">
+      <h3 style="margin:0">${row.sequence ? `${row.sequence}회차` : ''}
+        <span class="muted">${stamp(row.captured_at)}</span></h3>
       <div>${row.success
-        ? `<span class="badge ok"><i class="dot"></i>total ${num(row.score_combined)}</span>`
-        : `<span class="badge bad"><i class="dot"></i>${escape(row.failure_reason || '실패')}</span>`}</div>
+        ? `<span class="badge ok"><i class="dot"></i>total ${num(row.score_combined)}</span>
+           <span class="badge neutral"><i class="dot"></i>uniform ${num(row.score_uniform)}</span>
+           <span class="badge neutral"><i class="dot"></i>localized ${num(row.score_localized)}</span>`
+        : `<span class="badge bad"><i class="dot"></i>${escape(row.failure_reason || '실패')}</span>`}
+        ${row.read_point_id && row.point_id && row.read_point_id !== row.point_id
+          ? ' <span class="badge warn" title="숫자는 다르게 읽혔지만 후보에 배정됐다"><i class="dot"></i>숫자 불일치</span>' : ''}
+      </div>
     </div>
-    <p class="muted">${escape(row.summary || '')}</p>
-    ${override}
     <div class="shots">
       ${shot(row.baseline_image, '기준 사진 원본')}
       ${shot(row.capture_image, '판독 사진 원본')}
@@ -438,43 +586,25 @@ function detailCard(row, full) {
       ${shot(images.rectified, '판독 정합')}
       ${shot(images.distribution, '오염도 분포')}
     </div>
-    ${full ? `<div class="row" style="margin-top:12px">
-      <button class="secondary" data-rerun="${row.id}">이 건 재판독</button>
-    </div>` : ''}
+    <div class="row" style="margin-top:8px">
+      <button class="ghost tiny" data-rerun="${row.id}">이 건 재판독</button>
+    </div>
   </div>`;
 }
 
-async function loadStack() {
-  const point = $('#d-point').value;
-  if (!point) return;
-  const mode = $('#d-mode').value;
-  const rows = await api(`/api/readings?point_id=${encodeURIComponent(point)}&order=captured_at&desc=false&limit=200`);
-  if (!rows.length) { $('#d-body').innerHTML = '<div class="card empty">판독 결과가 없다.</div>'; return; }
-  const list = mode === 'one' ? rows.slice(-1) : rows;
-  $('#d-body').innerHTML = list.map((row) => detailCard(row, false)).join('');
+/** 결과 표에서 넘어왔을 때. 그 개소를 열고 해당 회차로 옮긴다. */
+async function openDetail(id) {
+  const row = await api(`/api/readings/${id}`);
+  location.hash = '#point';
+  if (row.point_id && state.point !== row.point_id) await showPoint(row.point_id);
+  const card = $(`#p-body [data-card="${id}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    card.classList.add('picked-card');
+  }
 }
 
-// ── 시계열 ──────────────────────────────────────────────────────────
-
-async function loadSeries() {
-  const point = $('#s-point').value;
-  if (!point) return;
-  const params = new URLSearchParams({ metric: $('#s-metric').value, slack: $('#s-slack').value || '0' });
-  if ($('#s-n').value) params.set('mad_n', $('#s-n').value);
-  const data = await api(`/api/series/${encodeURIComponent(point)}?${params}`);
-  if (!data.points.length) { $('#s-body').innerHTML = '<div class="card empty">판독 결과가 없다.</div>'; return; }
-
-  $('#s-body').innerHTML = `
-    <div class="card"><h3>절대량 · 기준 대비 지금까지 쌓인 총량</h3>
-      ${lineChart(data.points.map((p) => p.absolute), data.points.map((p) => p.sequence))}</div>
-    <div class="card"><h3>추세 · 직전 회차 대비 증분</h3>
-      ${lineChart(data.points.map((p) => p.delta), data.points.map((p) => p.sequence), data.limit)}
-      <p class="muted">증분 중앙값 ${num(data.delta_median, 4)} · MAD ${num(data.delta_mad, 4)}${data.limit === null ? ' · 경계 배수 n 을 넣으면 경계선을 그린다' : ` · 경계 ${num(data.limit, 4)}`}</p></div>
-    <div class="card"><h3>누적 · 증분에서 여유를 뺀 값의 합</h3>
-      ${lineChart(data.points.map((p) => p.cusum), data.points.map((p) => p.sequence), null, true)}</div>`;
-}
-
-function lineChart(values, labels, limit = null, alt = false) {
+function lineChart(values, labels, limit = null, alt = false, cuts = []) {
   const width = 900, height = 240, pad = 36;
   const clean = values.map((v) => (v === null || v === undefined ? null : Number(v)));
   const known = clean.filter((v) => v !== null);
@@ -491,6 +621,10 @@ function lineChart(values, labels, limit = null, alt = false) {
     `<circle class="dot" cx="${x(i)}" cy="${y(v)}" r="3"><title>${labels[i]}회차 ${num(v, 4)}</title></circle>`)).join('');
   const limitLine = limit === null || limit === undefined ? '' :
     `<line class="limit" x1="${pad}" y1="${y(limit)}" x2="${width - pad}" y2="${y(limit)}"></line>`;
+  // 기준이 바뀐 자리. 여기서 값의 척도가 갈린다.
+  const cutLines = cuts.map((i) =>
+    `<line class="cut" x1="${x(i)}" y1="${pad}" x2="${x(i)}" y2="${height - pad}"></line>
+     <text class="axis" x="${x(i) + 4}" y="${pad + 12}">기준 교체</text>`).join('');
 
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
     <line class="grid" x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}"></line>
@@ -498,6 +632,7 @@ function lineChart(values, labels, limit = null, alt = false) {
     <text class="axis" x="4" y="${pad + 4}">${num(high, 3)}</text>
     <text class="axis" x="4" y="${height - pad}">${num(low, 3)}</text>
     ${limitLine}
+    ${cutLines}
     <polyline class="line ${alt ? 'alt' : ''}" points="${path}"></polyline>
     ${dots}
   </svg>`;
@@ -787,7 +922,7 @@ async function loadRegistry() {
   $('#n-point-target').innerHTML = targetOptions;
   $('#r-all-target').innerHTML = '<option value="">선택</option>' + targetOptions;
   $('#x-point').innerHTML = '<option value="">전체</option>' + pointOptions;
-  ['#d-point', '#s-point'].forEach((sel) => { $(sel).innerHTML = '<option value="">선택</option>' + pointOptions; });
+
   $('#b-point').innerHTML = '<option value="">파일명에서</option>' + pointOptions;
   $('#h-point').innerHTML = '<option value="">전체</option>' + pointOptions;
 
@@ -965,8 +1100,22 @@ function bind() {
   $('#r-apply-all').addEventListener('click', applyToAll);
   $('#r-go').addEventListener('click', startRun);
 
-  $('#d-load').addEventListener('click', () => loadStack().catch((e) => toast(e.message, true)));
-  $('#s-load').addEventListener('click', () => loadSeries().catch((e) => toast(e.message, true)));
+  $('#p-back').addEventListener('click', backToList);
+  $$('#p-metric,#p-n,#p-slack').forEach((node) =>
+    node.addEventListener('change', () => loadPoint().catch((e) => toast(e.message, true))));
+
+  // 사진을 눌러 크게 본다. 목록에서는 작게 늘어놓아야 회차끼리 견줘진다.
+  const box = $('#lightbox');
+  document.addEventListener('click', (event) => {
+    const img = event.target.closest?.('.shot img');
+    if (!img) return;
+    $('img', box).src = img.src;
+    box.hidden = false;
+  });
+  box.addEventListener('click', () => { box.hidden = true; });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') box.hidden = true;
+  });
   $('#x-load').addEventListener('click', () => loadDistribution().catch((e) => toast(e.message, true)));
   $('#h-load').addEventListener('click', () => loadBaselineHistory().catch((e) => toast(e.message, true)));
 
@@ -1132,6 +1281,7 @@ async function boot() {
   route();
   drawPresets();
   await loadRegistry();
+  await loadPointList();
   await Promise.all([loadReadings(), loadRuns()]);
 }
 

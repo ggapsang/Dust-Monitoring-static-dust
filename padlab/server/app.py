@@ -114,7 +114,27 @@ def get_file(stored: str, root: Annotated[Path, Depends(get_root)]) -> FileRespo
     return api_readings._serve(stored, root)
 
 
+class FreshStatic(StaticFiles):
+    """받아 두되 쓰기 전에 서버에 물어보게 한다.
+
+    브라우저가 화면 파일을 캐시해 두면, 서버를 새로 올려도 옛 스크립트가 새
+    HTML 을 다루다 없는 요소를 찾아 터진다. 화면을 고치는 일이 잦은 도구라
+    이 사고가 반복된다.
+
+    ``no-cache`` 는 받지 말라는 뜻이 아니라 **쓰기 전에 확인하라**는 뜻이다.
+    바뀐 게 없으면 서버가 304 만 돌려주므로 비용은 왕복 한 번뿐이다.
+    """
+
+    def is_not_modified(self, response_headers, request_headers) -> bool:
+        return super().is_not_modified(response_headers, request_headers)
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if WEB_DIR.is_dir():
     # 화면을 따로 띄우지 않고 여기서 같이 낸다. 같은 출처라 CORS 가 필요
     # 없고, 내부망 단일 인스턴스에 서비스를 하나 더 두는 만큼의 값이 없다.
-    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+    app.mount("/", FreshStatic(directory=WEB_DIR, html=True), name="web")

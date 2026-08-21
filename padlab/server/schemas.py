@@ -181,13 +181,17 @@ class ReadingOut(BaseModel):
     images: dict[str, str] = Field(
         default={}, description="저장된 결과 이미지 주소. 없으면 비어 있다"
     )
+    capture_image: str | None = Field(
+        default=None, description="판독 사진 원본 주소"
+    )
+    baseline_image: str | None = Field(
+        default=None, description="짝지어진 기준 사진 원본 주소"
+    )
 
 
 class ReadingDetail(ReadingOut):
-    """단건 조회. 원본 사진과 판독 응답 전체를 함께 준다."""
+    """단건 조회. 판독 응답 원본까지 함께 준다."""
 
-    capture_image: str | None = None
-    baseline_image: str | None = None
     config_override: dict[str, Any] = {}
     response: dict[str, Any] | None = None
 
@@ -196,9 +200,24 @@ class SeriesPoint(BaseModel):
     reading_id: int
     sequence: int
     captured_at: datetime
-    absolute: float | None = Field(default=None, description="기준 대비 누적 총량")
-    delta: float | None = Field(default=None, description="직전 회차 대비 증분")
-    cusum: float | None = Field(default=None, description="증분에서 여유를 뺀 값의 합")
+    baseline_id: int | None = None
+    baseline_changed: bool = Field(
+        default=False,
+        description=(
+            "이 회차에서 기준 사진이 바뀌었는지. 바뀐 회차는 앞 회차와 견줄 수 "
+            "없다 - 값이 '그 기준 대비 쌓인 양' 이라 기준이 달라지면 척도가 "
+            "달라진다. 패드를 갈아 붙이면 침착도 0 에서 다시 시작한다."
+        ),
+    )
+    absolute: float | None = Field(default=None, description="그 회차의 기준 대비 총량")
+    delta: float | None = Field(
+        default=None,
+        description="직전 회차 대비 증분. 기준이 바뀐 회차는 비운다",
+    )
+    cusum: float | None = Field(
+        default=None,
+        description="증분에서 여유를 뺀 값의 합. 기준이 바뀌면 0 에서 다시 센다",
+    )
 
 
 class SeriesOut(BaseModel):

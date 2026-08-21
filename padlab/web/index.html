@@ -14,8 +14,7 @@
   <nav>
     <a href="#results" data-view="results">결과</a>
     <a href="#run" data-view="run">판독 실행</a>
-    <a href="#detail" data-view="detail">상세 보기</a>
-    <a href="#series" data-view="series">회차 추이</a>
+    <a href="#point" data-view="point">상세</a>
     <a href="#dist" data-view="dist">지표 분포</a>
     <a href="#registry" data-view="registry">등록</a>
     <a href="#baseline" data-view="baseline">기준 사진</a>
@@ -105,44 +104,50 @@
   </div>
 </section>
 
-<!-- 사진쌍 상세 ----------------------------------------------------->
-<section class="view" id="view-detail">
-  <h2>상세 보기</h2>
-  <div class="card">
-    <div class="row">
-      <label class="field grow">개소
-        <select id="d-point"><option value="">선택</option></select></label>
-      <label class="field">보기
-        <select id="d-mode">
-          <option value="one">한 건</option>
-          <option value="stack">회차별 이어 보기</option>
-        </select></label>
-      <button class="secondary" id="d-load">불러오기</button>
-    </div>
-  </div>
-  <div id="d-body"></div>
-</section>
+<!-- 개소 보기 : 목록에서 고르면 그 개소의 회차가 쫙 펼쳐진다 --------->
+<section class="view" id="view-point">
+  <h2>상세</h2>
 
-<!-- 개소별 회차 시계열 ---------------------------------------------->
-<section class="view" id="view-series">
-  <h2>회차 추이</h2>
-  <div class="card">
-    <div class="row">
-      <label class="field grow">개소
-        <select id="s-point"><option value="">선택</option></select></label>
-      <label class="field">지표
-        <select id="s-metric">
-          <option value="score_combined">total</option>
-          <option value="score_uniform">uniform</option>
-          <option value="score_localized">localized</option>
-        </select></label>
-      <label class="field">경계 배수 n<input type="number" id="s-n" step="0.5" placeholder="비우면 안 그림" style="width:120px"></label>
-      <label class="field">CUSUM 여유<input type="number" id="s-slack" step="0.01" value="0" style="width:120px"></label>
-      <button class="secondary" id="s-load">불러오기</button>
+  <div id="p-list-wrap">
+    <div class="card" style="padding:0">
+      <div class="scroll"><table id="t-points">
+        <thead><tr>
+          <th class="plain">개소</th><th class="plain">명칭</th>
+          <th class="plain mid">촬영 단위</th><th class="plain mid">톤</th>
+          <th class="plain mid">기준 사진</th>
+          <th class="num plain mid">전체 회차</th>
+          <th class="num plain mid">현 기준 회차</th>
+          <th class="num plain mid">최근 total</th>
+          <th class="num plain mid">직전 대비</th>
+          <th class="num plain mid">회차당 평균</th>
+          <th class="num plain mid">현 기준 부착 이후</th>
+          <th class="plain mid">최근 촬영</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div class="empty" id="p-list-empty">등록된 개소가 없다.</div>
     </div>
-    <p class="muted">개소마다 감도가 달라 개소 간 값을 직접 견주지 않는다. 이 화면은 개소 하나만 그린다.</p>
   </div>
-  <div id="s-body"></div>
+
+  <div id="p-detail" hidden>
+    <div class="card">
+      <div class="row">
+        <button class="secondary" id="p-back">← 목록</button>
+        <h3 id="p-title" class="grow" style="margin:0"></h3>
+        <label class="field">지표
+          <select id="p-metric">
+            <option value="score_combined">total</option>
+            <option value="score_uniform">uniform</option>
+            <option value="score_localized">localized</option>
+          </select></label>
+        <label class="field">경계 배수 n<input type="number" id="p-n" step="0.5" placeholder="비우면 안 그림" style="width:110px"></label>
+        <label class="field">CUSUM 여유<input type="number" id="p-slack" step="0.01" value="0" style="width:110px"></label>
+      </div>
+      <p class="muted">회차별 사진을 위아래로 이어 놓고 추이를 함께 본다. 개소마다 감도가 달라 개소 간 값은 직접 견주지 않는다.</p>
+    </div>
+    <div id="p-charts"></div>
+    <div id="p-body"></div>
+  </div>
 </section>
 
 <!-- 지표 분포 ------------------------------------------------------->
@@ -235,6 +240,8 @@
 </section>
 
 </main>
+
+<div id="lightbox" hidden><img alt=""></div>
 <script src="app.js"></script>
 </body>
 </html>

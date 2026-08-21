@@ -128,7 +128,11 @@ def _sequences(session: Session) -> dict[int, int]:
 
 
 def _to_out(
-    reading: Reading, capture: Capture, run: Run, sequence: int | None
+    reading: Reading,
+    capture: Capture,
+    run: Run,
+    sequence: int | None,
+    baseline_path: str | None = None,
 ) -> ReadingOut:
     images = {
         kind: f"/files/{path}"
@@ -166,6 +170,8 @@ def _to_out(
         run_kind=run.kind,
         has_override=bool(run.config_override),
         images=images,
+        capture_image=f"/files/{capture.file_path}" if capture else None,
+        baseline_image=f"/files/{baseline_path}" if baseline_path else None,
     )
 
 
@@ -202,9 +208,25 @@ def list_readings(
     stmt = stmt.order_by(column.desc() if desc else column.asc()).limit(limit).offset(offset)
 
     sequences = _sequences(session)
+    rows = session.execute(stmt).all()
+
+    # 기준 사진 경로를 한 번에 모은다. 행마다 따로 물으면 목록 하나에 질의가
+    # 수백 번 나간다.
+    wanted = {r.baseline_id for r, _, _ in rows if r.baseline_id}
+    paths = (
+        dict(
+            session.execute(
+                select(Baseline.id, Baseline.file_path).where(Baseline.id.in_(wanted))
+            ).all()
+        )
+        if wanted
+        else {}
+    )
     return [
-        _to_out(reading, capture, run, sequences.get(reading.id))
-        for reading, capture, run in session.execute(stmt).all()
+        _to_out(
+            reading, capture, run, sequences.get(reading.id), paths.get(reading.baseline_id)
+        )
+        for reading, capture, run in rows
     ]
 
 
@@ -292,11 +314,15 @@ def get_reading(
     run = session.get(Run, row.run_id)
     baseline = session.get(Baseline, row.baseline_id) if row.baseline_id else None
 
-    base = _to_out(row, capture, run, _sequences(session).get(row.id))
+    base = _to_out(
+        row,
+        capture,
+        run,
+        _sequences(session).get(row.id),
+        baseline.file_path if baseline else None,
+    )
     return ReadingDetail(
         **base.model_dump(),
-        capture_image=f"/files/{capture.file_path}" if capture else None,
-        baseline_image=f"/files/{baseline.file_path}" if baseline else None,
         config_override=run.config_override or {},
         response=row.response,
     )
@@ -332,12 +358,21 @@ def series(
     )
     rows = session.execute(stmt).all()
 
+    # 기준이 바뀌면 척도가 바뀐다. 값은 '그 기준 대비 쌓인 양' 이라, 패드를
+    # 갈아 붙이면 침착이 0 에서 다시 시작한다. 그 자리를 이어서 빼면 큰 폭의
+    # 하락으로 보이는데 실제로는 새 패드로 갈았을 뿐이다.
     points: list[SeriesPoint] = []
     deltas: list[float] = []
     previous: float | None = None
+    previous_baseline: int | None = None
     cusum = 0.0
     for index, (reading, capture) in enumerate(rows, start=1):
         value = getattr(reading, metric)
+        changed = index > 1 and reading.baseline_id != previous_baseline
+        if changed:
+            previous = None
+            cusum = 0.0
+
         delta = None if value is None or previous is None else value - previous
         if delta is not None:
             deltas.append(delta)
@@ -347,11 +382,14 @@ def series(
                 reading_id=reading.id,
                 sequence=index,
                 captured_at=capture.captured_at,
+                baseline_id=reading.baseline_id,
+                baseline_changed=changed,
                 absolute=value,
                 delta=delta,
                 cusum=cusum if delta is not None else None,
             )
         )
+        previous_baseline = reading.baseline_id
         if value is not None:
             previous = value
 
