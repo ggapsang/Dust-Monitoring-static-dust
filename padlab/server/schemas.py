@@ -175,6 +175,9 @@ class ReadingOut(BaseModel):
     read_point_id: str | None = None
     elapsed_ms: float | None = None
 
+    requested_at: datetime | None = Field(
+        default=None, description="판독을 요청한(실행을 시작한) 일시"
+    )
     run_kind: str | None = None
     has_override: bool = False
 

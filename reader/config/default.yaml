@@ -22,7 +22,13 @@ detect:
   # 패드가 0.005(=250px) 에 걸려 통째로 실패했다. 면적은 1차 거름망일 뿐이고
   # 뒤에 링 구조, 사각형, 채움도, 종횡비, 테두리 규격 검증이 남아 있으므로
   # 낮춰도 오검출로 이어지지 않는다.
-  min_pad_area_ratio: 0.002
+  #
+  # quality.min_pad_size_px 보다 낮게 둔다. 여기는 "사각형 패드처럼 생겼나"
+  # 만 보는 1차 거름망이고, "측정을 믿을 만한가" 는 그 게이트가 따로 본다.
+  # 이 값이 그 게이트보다 높으면 둘 사이에 있는 크기가 항상 여기서 먼저
+  # 끊겨 quality_pad_size 실패가 나올 일이 없어진다.
+  # 실촬영에서 130px 짜리 패드가 여기 걸려 통째로 no_pad 로 실패했다.
+  min_pad_area_ratio: 0.001
   max_pad_area_ratio: 0.98
   # approxPolyDP 의 epsilon 을 둘레의 몇 배로 잡을지.
   approx_epsilon_ratio: 0.02
@@ -84,7 +90,14 @@ quality:
   min_tenengrad: null
   max_saturated_bright_ratio: null
   max_saturated_dark_ratio: null
-  min_pad_size_px: null
+  # 사진 속 패드 한 변이 최소 몇 픽셀은 되어야 하는지. 너무 멀리서 찍으면
+  # 아무리 보정해도 원본에 없는 정보는 안 생긴다.
+  #
+  # 130px 짜리 실촬영을 "정상 촬영" 으로 인정하기로 하고 그 아래로 여유를
+  # 뒀다. 다만 이 크기에서 POINT_ID 판독은 못 믿는다 - 숫자 글자가 패드의
+  # 11.8% 라 130px 패드면 원본 숫자 높이가 약 15px 뿐이다. 패드는 재지만
+  # 번호는 못 읽을 각오를 하고 쓰는 값이다.
+  min_pad_size_px: 120
   # 기준 이미지와 판독 이미지의 패드 크기 차이 허용 비율. 두 사진의 패드
   # 크기가 크게 다르면 촬영 위치가 달라진 것이므로 판독 불가로 본다.
   max_pad_size_diff_ratio: null

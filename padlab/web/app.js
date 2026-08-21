@@ -12,14 +12,17 @@ const state = {
   targets: [],
   points: [],
   readings: [],
+  pointRows: [],
   selected: new Set(),
-  // 열마다의 필터와 정렬. 엑셀처럼 열 이름을 눌러 정한다.
-  colFilters: {},
+  // 표마다 따로 갖는 열 필터·정렬. 엑셀처럼 열 이름을 눌러 정한다.
+  // 결과 표와 개소 목록이 같은 틀을 쓰되 필터·정렬은 서로 독립이어야 한다 -
+  // 안 그러면 결과 표에서 걸어 둔 조건이 개소 목록에도 그대로 걸려 버린다.
+  tables: {
+    results: { colFilters: {}, sort: [{ key: 'captured_at', desc: true }] },
+    points: { colFilters: {}, sort: [{ key: 'point_id', desc: false }] },
+  },
   // 개소 보기에서 펼쳐 놓은 개소. null 이면 목록 화면이다.
   point: null,
-  // 정렬 키를 순서대로 담는다. 앞의 것이 우선이고, 값이 같을 때 뒤의 것으로
-  // 가른다. 하나만 담으면 단일 정렬과 같다.
-  sort: [{ key: 'captured_at', desc: true }],
   menu: null,
   uploads: [],
   poll: null,
@@ -103,6 +106,9 @@ const COLUMNS = [
     cell: (r) => `${escape(r.read_point_id || '—')}${r.read_point_id && r.point_id && r.read_point_id !== r.point_id
       ? ' <span class="badge warn" title="판독 번호가 짝지어진 개소와 다르다"><i class="dot"></i>불일치</span>' : ''}` },
   { key: 'elapsed_ms', label: '처리(ms)', kind: 'num', digits: 0 },
+  { key: 'requested_at', label: '판독 요청', kind: 'date',
+    face: (r) => (r.requested_at || '').slice(0, 10),
+    cell: (r) => stamp(r.requested_at) },
   { key: 'run_kind', label: '실행', kind: 'text',
     get: (r) => (r.run_kind === 'rerun' ? '재판독' : '최초'),
     cell: (r) => `${r.run_kind === 'rerun'
@@ -118,6 +124,42 @@ const face = (column, row) => {
   return value === null || value === undefined || value === '' ? '' : String(value);
 };
 
+// 판독 결과 표와 개소 목록 표가 이 틀을 같이 쓴다. 열 이름을 눌러 정렬하고
+// 값을 고르는 동작이 두 표에서 똑같아야 하고, 필터·정렬은 표마다 따로
+// 갖는다 - 안 그러면 한쪽에 걸어 둔 조건이 다른 쪽에도 새어 든다.
+const TABLES = {
+  results: {
+    columns: COLUMNS,
+    rows: () => state.readings,
+    headEl: () => $('#t-head'),
+    bodyEl: () => $('#t-readings tbody'),
+    countEl: () => $('#f-count'),
+    emptyEl: () => $('#results-empty'),
+    selectable: true,
+    rowKey: (row) => row.id,
+    // 체크박스 값은 DOM 속성이라 늘 문자열로 돌아온다. row.id 는 숫자라
+    // 되돌릴 때 형을 맞춰야 Set.has() 비교가 어긋나지 않는다.
+    parseKey: Number,
+    onRowClick: (id) => openDetail(Number(id)).catch((e) => toast(e.message, true)),
+  },
+  points: {
+    columns: () => POINT_COLUMNS,
+    rows: () => state.pointRows,
+    headEl: () => $('#pt-head'),
+    bodyEl: () => $('#t-points tbody'),
+    countEl: () => $('#pt-count'),
+    emptyEl: () => $('#p-list-empty'),
+    selectable: false,
+    rowKey: (row) => row.point_id,
+    onRowClick: (id) => showPoint(id).catch((e) => toast(e.message, true)),
+  },
+};
+
+const tableColumns = (tableId) => {
+  const cols = TABLES[tableId].columns;
+  return typeof cols === 'function' ? cols() : cols;
+};
+
 /** 기간만 서버에 넘긴다. 나머지는 받아 온 목록 안에서 거른다. */
 function query() {
   const params = new URLSearchParams();
@@ -130,14 +172,18 @@ async function loadReadings() {
   const params = query();
   params.set('limit', '5000');
   state.readings = await api(`/api/readings?${params}`);
-  drawReadings();
+  drawTable('results');
 }
 
 /** 열 필터를 통과한 행. 정렬까지 마친 것이다. */
-function visibleRows() {
-  let rows = state.readings.filter((row) =>
-    COLUMNS.every((column) => {
-      const rule = state.colFilters[column.key];
+function visibleRows(tableId) {
+  const table = TABLES[tableId];
+  const columns = tableColumns(tableId);
+  const { colFilters, sort } = state.tables[tableId];
+
+  let rows = table.rows().filter((row) =>
+    columns.every((column) => {
+      const rule = colFilters[column.key];
       if (!rule) return true;
       if (rule.values) return rule.values.has(face(column, row));
       const value = raw(column, row);
@@ -147,10 +193,10 @@ function visibleRows() {
       return true;
     }));
 
-  if (state.sort.length) {
+  if (sort.length) {
     rows = [...rows].sort((left, right) => {
-      for (const key of state.sort) {
-        const column = COLUMNS.find((c) => c.key === key.key);
+      for (const key of sort) {
+        const column = columns.find((c) => c.key === key.key);
         if (!column) continue;
         const diff = compare(column, raw(column, left), raw(column, right), key.desc);
         if (diff) return diff;
@@ -174,68 +220,89 @@ function compare(column, x, y, desc) {
   return desc ? -diff : diff;
 }
 
-function drawReadings() {
-  $('#t-head').innerHTML = '<th class="plain"></th>' + COLUMNS.map((column, index) => {
-    const rank = state.sort.findIndex((k) => k.key === column.key);
-    const filtered = Boolean(state.colFilters[column.key]);
+/** 표 하나를 다시 그린다. 머리글과 본문을 같은 열 정의로 그려야 어긋나지 않는다. */
+function drawTable(tableId) {
+  const table = TABLES[tableId];
+  const columns = tableColumns(tableId);
+  const { colFilters, sort } = state.tables[tableId];
+  const lead = table.selectable ? '<th class="plain"></th>' : '';
+
+  table.headEl().innerHTML = lead + columns.map((column, index) => {
+    const rank = sort.findIndex((k) => k.key === column.key);
+    const filtered = Boolean(colFilters[column.key]);
     // 정렬이 둘 이상이면 순번을 같이 낸다. 무엇이 먼저인지 안 보이면 왜 이
     // 순서로 늘어섰는지 알 수 없다.
-    const mark = `${rank < 0 ? '' : (state.sort[rank].desc ? '▼' : '▲')
-      + (state.sort.length > 1 ? rank + 1 : '')}${filtered ? '●' : ''}`;
-    // 촬영 일시만 왼쪽에 두고 그 뒤는 전부 가운데로 맞춘다. 열마다 정렬이
+    const mark = `${rank < 0 ? '' : (sort[rank].desc ? '▼' : '▲')
+      + (sort.length > 1 ? rank + 1 : '')}${filtered ? '●' : ''}`;
+    // 첫 열만 왼쪽에 두고 그 뒤는 전부 가운데로 맞춘다. 열마다 정렬이
     // 다르면 값이 어느 열 것인지 눈으로 좇기 어렵다.
     return `<th class="${column.kind === 'num' ? 'num ' : ''}${index ? 'mid ' : ''}${rank >= 0 || filtered ? 'picked' : ''}"
       data-col="${column.key}">${escape(column.label)}<span class="mark">${mark}</span></th>`;
   }).join('');
 
-  const rows = visibleRows();
-  $('#t-readings tbody').innerHTML = rows.map((row) => `<tr data-id="${row.id}" class="${state.selected.has(row.id) ? 'sel' : ''}">
-      <td><input type="checkbox" data-pick="${row.id}" ${state.selected.has(row.id) ? 'checked' : ''}></td>
-      ${COLUMNS.map((column, index) => {
+  const rows = visibleRows(tableId);
+  table.bodyEl().innerHTML = rows.map((row) => {
+    const key = table.rowKey(row);
+    const pick = table.selectable
+      ? `<td><input type="checkbox" data-pick="${key}" ${state.selected.has(key) ? 'checked' : ''}></td>` : '';
+    return `<tr data-row="${key}" class="${table.selectable && state.selected.has(key) ? 'sel' : ''}">
+      ${pick}
+      ${columns.map((column, index) => {
         const body = column.cell
           ? column.cell(row)
           : (column.kind === 'num' ? num(raw(column, row), column.digits) : escape(face(column, row) || '—'));
         return `<td class="${column.kind === 'num' ? 'num ' : ''}${index ? 'mid ' : ''}${column.cls || ''}">${body}</td>`;
       }).join('')}
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
-  const hidden = state.readings.length - rows.length;
-  const order = state.sort
+  const total = table.rows().length;
+  const hidden = total - rows.length;
+  const order = sort
     .map((key) => {
-      const column = COLUMNS.find((c) => c.key === key.key);
+      const column = columns.find((c) => c.key === key.key);
       return column ? `${column.label} ${key.desc ? '▼' : '▲'}` : '';
     })
     .filter(Boolean)
     .join(' → ');
-  $('#f-count').textContent = state.readings.length
-    ? `${rows.length}건${hidden ? ` (필터로 ${hidden}건 숨김)` : ''}${order ? ` · 정렬 ${order}` : ''}`
-    : '';
-  $('#results-empty').style.display = state.readings.length ? 'none' : 'block';
-  $('#f-rerun').disabled = $('#f-delete').disabled = state.selected.size === 0;
+  const countEl = table.countEl();
+  if (countEl) {
+    countEl.textContent = total
+      ? `${rows.length}건${hidden ? ` (필터로 ${hidden}건 숨김)` : ''}${order ? ` · 정렬 ${order}` : ''}`
+      : '';
+  }
+  const emptyEl = table.emptyEl();
+  if (emptyEl) emptyEl.style.display = total ? 'none' : 'block';
+  if (table.selectable) $('#f-rerun').disabled = $('#f-delete').disabled = state.selected.size === 0;
 
-  $$('#t-readings tbody tr').forEach((tr) => tr.addEventListener('click', (event) => {
+  $$('tr[data-row]', table.bodyEl()).forEach((tr) => tr.addEventListener('click', (event) => {
     if (event.target.dataset.pick) return;
-    openDetail(Number(tr.dataset.id));
+    table.onRowClick(tr.dataset.row);
   }));
-  $$('[data-pick]').forEach((box) => box.addEventListener('change', () => {
-    const id = Number(box.dataset.pick);
-    box.checked ? state.selected.add(id) : state.selected.delete(id);
-    box.closest('tr').classList.toggle('sel', box.checked);
-    $('#f-rerun').disabled = $('#f-delete').disabled = state.selected.size === 0;
-  }));
-  $$('#t-head th[data-col]').forEach((th) => th.addEventListener('click', (event) => {
+  if (table.selectable) {
+    $$('[data-pick]', table.bodyEl()).forEach((box) => box.addEventListener('change', () => {
+      const key = (table.parseKey || String)(box.dataset.pick);
+      box.checked ? state.selected.add(key) : state.selected.delete(key);
+      box.closest('tr').classList.toggle('sel', box.checked);
+      $('#f-rerun').disabled = $('#f-delete').disabled = state.selected.size === 0;
+    }));
+  }
+  $$('th[data-col]', table.headEl()).forEach((th) => th.addEventListener('click', (event) => {
     event.stopPropagation();
-    openColumnMenu(th, COLUMNS.find((c) => c.key === th.dataset.col));
+    openColumnMenu(tableId, th, columns.find((c) => c.key === th.dataset.col));
   }));
 }
 
 /** 열 하나의 정렬·필터 메뉴. 한 번에 하나만 떠 있다. */
-function openColumnMenu(th, column) {
+function openColumnMenu(tableId, th, column) {
   closeColumnMenu();
+  const table = TABLES[tableId];
+  const columns = tableColumns(tableId);
+  const { colFilters, sort } = state.tables[tableId];
   const menu = document.createElement('div');
   menu.className = 'colmenu';
 
-  const rule = state.colFilters[column.key];
+  const rule = colFilters[column.key];
   const body = column.kind === 'num'
     ? `<div class="range">
          <label class="field">이상<input type="number" step="any" data-min value="${rule && rule.min !== null ? rule.min : ''}"></label>
@@ -244,9 +311,9 @@ function openColumnMenu(th, column) {
     : (() => {
         // 지금 화면에 있는 값만 보여 준다. 다른 열에서 이미 걸러 낸 값을
         // 고르게 하면 아무리 눌러도 아무 행도 안 남는다.
-        const pool = state.readings.filter((row) => COLUMNS.every((other) => {
+        const pool = table.rows().filter((row) => columns.every((other) => {
           if (other.key === column.key) return true;
-          const r = state.colFilters[other.key];
+          const r = colFilters[other.key];
           if (!r) return true;
           if (r.values) return r.values.has(face(other, row));
           const v = raw(other, row);
@@ -262,7 +329,7 @@ function openColumnMenu(th, column) {
           || '<div class="opt muted">값이 없다</div>'}</div>`;
       })();
 
-  const rank = state.sort.findIndex((k) => k.key === column.key);
+  const rank = sort.findIndex((k) => k.key === column.key);
   menu.innerHTML = `
     <div class="opt" data-sort-asc>오름차순 정렬</div>
     <div class="opt" data-sort-desc>내림차순 정렬</div>
@@ -298,36 +365,38 @@ function openColumnMenu(th, column) {
   menu.addEventListener('click', (event) => {
     event.stopPropagation();
     const target = event.target;
-    if (target.closest('[data-sort-asc]')) { state.sort = [{ key: column.key, desc: false }]; closeColumnMenu(); drawReadings(); }
-    else if (target.closest('[data-sort-desc]')) { state.sort = [{ key: column.key, desc: true }]; closeColumnMenu(); drawReadings(); }
-    else if (target.closest('[data-add-asc]')) { addSort(column.key, false); closeColumnMenu(); drawReadings(); }
-    else if (target.closest('[data-add-desc]')) { addSort(column.key, true); closeColumnMenu(); drawReadings(); }
-    else if (target.closest('[data-unsort]')) { state.sort = state.sort.filter((k) => k.key !== column.key); closeColumnMenu(); drawReadings(); }
-    else if (target.closest('[data-clear]')) { delete state.colFilters[column.key]; closeColumnMenu(); drawReadings(); }
-    else if (target.closest('[data-apply]')) { applyColumnFilter(menu, column); closeColumnMenu(); drawReadings(); }
+    const redraw = () => { closeColumnMenu(); drawTable(tableId); };
+    if (target.closest('[data-sort-asc]')) { state.tables[tableId].sort = [{ key: column.key, desc: false }]; redraw(); }
+    else if (target.closest('[data-sort-desc]')) { state.tables[tableId].sort = [{ key: column.key, desc: true }]; redraw(); }
+    else if (target.closest('[data-add-asc]')) { addSort(tableId, column.key, false); redraw(); }
+    else if (target.closest('[data-add-desc]')) { addSort(tableId, column.key, true); redraw(); }
+    else if (target.closest('[data-unsort]')) { state.tables[tableId].sort = sort.filter((k) => k.key !== column.key); redraw(); }
+    else if (target.closest('[data-clear]')) { delete colFilters[column.key]; redraw(); }
+    else if (target.closest('[data-apply]')) { applyColumnFilter(menu, colFilters, column); redraw(); }
   });
 }
 
 /** 정렬 키를 뒤에 붙인다. 이미 있으면 방향만 바꾸고 순번은 지킨다. */
-function addSort(key, desc) {
-  const found = state.sort.find((k) => k.key === key);
+function addSort(tableId, key, desc) {
+  const sort = state.tables[tableId].sort;
+  const found = sort.find((k) => k.key === key);
   if (found) found.desc = desc;
-  else state.sort.push({ key, desc });
+  else sort.push({ key, desc });
 }
 
-function applyColumnFilter(menu, column) {
+function applyColumnFilter(menu, colFilters, column) {
   if (column.kind === 'num') {
     const min = $('[data-min]', menu).value;
     const max = $('[data-max]', menu).value;
-    if (min === '' && max === '') delete state.colFilters[column.key];
-    else state.colFilters[column.key] = { min: min === '' ? null : Number(min), max: max === '' ? null : Number(max) };
+    if (min === '' && max === '') delete colFilters[column.key];
+    else colFilters[column.key] = { min: min === '' ? null : Number(min), max: max === '' ? null : Number(max) };
     return;
   }
   const boxes = $$('[data-value]', menu);
   const picked = boxes.filter((box) => box.checked).map((box) => box.dataset.value);
   // 전부 골랐으면 거르지 않는 것과 같다. 필터 표시를 남기지 않는다.
-  if (picked.length === boxes.length) delete state.colFilters[column.key];
-  else state.colFilters[column.key] = { values: new Set(picked) };
+  if (picked.length === boxes.length) delete colFilters[column.key];
+  else colFilters[column.key] = { values: new Set(picked) };
 }
 
 function closeColumnMenu() {
@@ -348,28 +417,34 @@ const loadPresets = () => {
 };
 const savePresets = (all) => localStorage.setItem(PRESET_KEY, JSON.stringify(all));
 
-/** 지금 조건을 저장할 수 있는 형태로. Set 은 그대로 직렬화되지 않는다. */
+/** 지금 조건을 저장할 수 있는 형태로. Set 은 그대로 직렬화되지 않는다.
+ *
+ * 판독 결과 표(results) 기준으로만 저장한다 - 조회 조건은 실증에서 그
+ * 표에 걸어 두고 반복해서 부르는 것이라, 개소 목록까지 같이 저장할 이유가
+ * 없다.
+ */
 function currentPreset() {
   const filters = {};
-  Object.entries(state.colFilters).forEach(([key, rule]) => {
+  Object.entries(state.tables.results.colFilters).forEach(([key, rule]) => {
     filters[key] = rule.values ? { values: [...rule.values] } : { min: rule.min, max: rule.max };
   });
   return {
     filters,
-    sort: state.sort.map((k) => ({ ...k })),
+    sort: state.tables.results.sort.map((k) => ({ ...k })),
     since: $('#f-since').value,
     until: $('#f-until').value,
   };
 }
 
 async function applyPreset(preset) {
-  state.colFilters = {};
+  const colFilters = {};
   Object.entries(preset.filters || {}).forEach(([key, rule]) => {
-    state.colFilters[key] = rule.values
+    colFilters[key] = rule.values
       ? { values: new Set(rule.values) }
       : { min: rule.min ?? null, max: rule.max ?? null };
   });
-  state.sort = (preset.sort || []).map((k) => ({ ...k }));
+  state.tables.results.colFilters = colFilters;
+  state.tables.results.sort = (preset.sort || []).map((k) => ({ ...k }));
 
   // 기간이 달라지면 가져올 범위가 달라지므로 다시 받아야 한다.
   const changed = $('#f-since').value !== (preset.since || '')
@@ -377,7 +452,7 @@ async function applyPreset(preset) {
   $('#f-since').value = preset.since || '';
   $('#f-until').value = preset.until || '';
   if (changed) await loadReadings();
-  else drawReadings();
+  else drawTable('results');
 }
 
 function drawPresets(selected = '') {
@@ -387,27 +462,36 @@ function drawPresets(selected = '') {
   $('#f-drop').disabled = !$('#f-preset').value;
 }
 
-/** 지금 보이는 그대로 CSV 로 낸다. 화면과 파일이 다르면 어느 쪽이 맞는지 알 수 없다. */
-function exportCsv() {
-  const rows = visibleRows();
+/** 표 하나를 CSV 파일로 내려준다.
+ *
+ * 화면에 보이는 것을 그대로 쓴다. 서버가 자기 조건으로 다시 뽑으면 보이는
+ * 것과 달라져 어느 쪽이 맞는지 알 수 없다.
+ */
+function downloadCsv(filename, header, rows) {
   const line = (cells) => cells.map((cell) => {
     const text = String(cell ?? '');
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   }).join(',');
 
-  const body = [line(COLUMNS.map((c) => c.label))]
-    .concat(rows.map((row) => line(COLUMNS.map((column) =>
-      (column.kind === 'num' ? raw(column, row) : face(column, row))))))
-    .join('\r\n');
-
+  const body = [line(header)].concat(rows.map(line)).join('\r\n');
   // BOM 을 붙인다. 없으면 엑셀이 한글 머리글을 깨뜨린다.
   const blob = new Blob(['﻿' + body], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'readings.csv';
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/** 판독 결과 표. 필터와 정렬이 걸린 그대로다. */
+function exportCsv() {
+  downloadCsv(
+    'readings.csv',
+    COLUMNS.map((c) => c.label),
+    visibleRows('results').map((row) =>
+      COLUMNS.map((column) => (column.kind === 'num' ? raw(column, row) : face(column, row)))),
+  );
 }
 
 // ── 개소 보기 ───────────────────────────────────────────────────────
@@ -425,6 +509,33 @@ function exportCsv() {
  * 직전에 0.01 이었으면 급히 오른 것이고 0.06 이었으면 잦아든 것이다.
  * 그래서 변화량을 함께 낸다.
  */
+/** 개소 목록 표의 열 정의. 판독 결과 표와 같은 틀(TABLES)로 그린다 - 열
+ * 이름을 눌러 정렬하고 값을 고르는 동작이 두 표에서 똑같아야 한다.
+ */
+const POINT_COLUMNS = [
+  { key: 'point_id', label: '개소', kind: 'text', cls: 'key' },
+  { key: 'name', label: '명칭', kind: 'text' },
+  { key: 'target_id', label: '촬영 단위', kind: 'text' },
+  { key: 'tone', label: '톤', kind: 'text',
+    cell: (r) => `<span class="badge neutral"><i class="dot"></i>${escape(r.tone)}</span>` },
+  { key: 'has_baseline', label: '기준 사진', kind: 'text',
+    get: (r) => (r.has_baseline ? '있음' : '없음'),
+    cell: (r) => (r.has_baseline
+      ? '<span class="badge ok"><i class="dot"></i>있음</span>'
+      : '<span class="badge warn"><i class="dot"></i>없음</span>') },
+  { key: 'total_rounds', label: '전체 회차', kind: 'num', digits: 0 },
+  { key: 'current_rounds', label: '현 기준 회차', kind: 'num', digits: 0,
+    cell: (r) => `${r.current_rounds}${r.changed
+      ? ' <span class="badge info" title="이 개소는 패드를 갈아 붙인 적이 있다. 추세는 지금 기준 안에서만 낸다"><i class="dot"></i>교체</span>' : ''}` },
+  { key: 'recent_total', label: '최근 total', kind: 'num', digits: 3, cls: 'key' },
+  { key: 'step', label: '직전 대비', kind: 'num', digits: 4, cell: (r) => trend(r.step) },
+  { key: 'mean', label: '회차당 평균', kind: 'num', digits: 4, cell: (r) => trend(r.mean) },
+  { key: 'since', label: '현 기준 부착 이후', kind: 'num', digits: 4, cell: (r) => trend(r.since) },
+  { key: 'last_captured_at', label: '최근 촬영', kind: 'date',
+    face: (r) => (r.last_captured_at || '').slice(0, 10),
+    cell: (r) => stamp(r.last_captured_at) },
+];
+
 async function loadPointList() {
   const rows = await api('/api/readings?limit=5000');
 
@@ -443,8 +554,7 @@ async function loadPointList() {
     if (!slot || (row.captured_at || '') > (slot.captured_at || '')) latest[row.point_id] = row;
   });
 
-  const body = $('#t-points tbody');
-  body.innerHTML = state.points.map((point) => {
+  state.pointRows = state.points.map((point) => {
     const line = series[point.point_id] || [];
     const last = latest[point.point_id];
 
@@ -453,35 +563,32 @@ async function loadPointList() {
     // 다른 회차와 이어서 빼면 큰 폭의 하락으로 보이는데 실제로는 갈았을
     // 뿐이다. 전체 회차 수는 그것대로 의미가 있어 따로 낸다.
     const currentBaseline = line.length ? line[line.length - 1].baseline_id : null;
-    const window = line.filter((r) => r.baseline_id === currentBaseline);
-    const values = window.map((r) => r.score_combined);
+    const windowRows = line.filter((r) => r.baseline_id === currentBaseline);
+    const values = windowRows.map((r) => r.score_combined);
     const n = values.length;
     const recent = n ? values[n - 1] : null;
     const step = n >= 2 ? recent - values[n - 2] : null;
     const total = n >= 2 ? recent - values[0] : null;
     const mean = n >= 2 ? total / (n - 1) : null;
 
-    return `<tr data-point="${escape(point.point_id)}">
-      <td class="key">${escape(point.point_id)}</td>
-      <td>${escape(point.name || '—')}</td>
-      <td class="mid">${escape(point.target_id)}</td>
-      <td class="mid"><span class="badge neutral"><i class="dot"></i>${escape(point.tone)}</span></td>
-      <td class="mid">${point.has_baseline
-        ? '<span class="badge ok"><i class="dot"></i>있음</span>'
-        : '<span class="badge warn"><i class="dot"></i>없음</span>'}</td>
-      <td class="num mid">${line.length}</td>
-      <td class="num mid">${n}${line.length > n ? ' <span class="badge info" title="이 개소는 패드를 갈아 붙인 적이 있다. 추세는 지금 기준 안에서만 낸다"><i class="dot"></i>교체</span>' : ''}</td>
-      <td class="num mid key">${recent === null ? '—' : num(recent)}</td>
-      <td class="num mid">${trend(step)}</td>
-      <td class="num mid">${trend(mean)}</td>
-      <td class="num mid">${trend(total)}</td>
-      <td class="mid">${last ? stamp(last.captured_at) : '—'}</td>
-    </tr>`;
-  }).join('');
-  $('#p-list-empty').style.display = state.points.length ? 'none' : 'block';
+    return {
+      point_id: point.point_id,
+      name: point.name || null,
+      target_id: point.target_id,
+      tone: point.tone,
+      has_baseline: point.has_baseline,
+      total_rounds: line.length,
+      current_rounds: n,
+      changed: line.length > n,
+      recent_total: recent,
+      step,
+      mean,
+      since: total,
+      last_captured_at: last ? last.captured_at : null,
+    };
+  });
 
-  $$('#t-points tbody tr').forEach((tr) =>
-    tr.addEventListener('click', () => showPoint(tr.dataset.point).catch((e) => toast(e.message, true))));
+  drawTable('points');
 }
 
 /** 변화량 한 칸. 방향을 색이 아니라 기호로 낸다.
@@ -494,6 +601,60 @@ function trend(value) {
   if (Math.abs(value) < 0.0005) return `<span class="muted">${num(value)}</span>`;
   const up = value > 0;
   return `<span class="badge ${up ? 'warn' : 'ok'}"><i class="dot"></i>${up ? '▲' : '▼'} ${num(Math.abs(value))}</span>`;
+}
+
+/** 개소 목록. 지금 걸려 있는 필터·정렬이 그대로 반영된다. */
+function exportPointList() {
+  const rows = visibleRows('points');
+  if (!rows.length) { toast('내보낼 개소가 없다', true); return; }
+  downloadCsv(
+    'points.csv',
+    POINT_COLUMNS.map((c) => c.label),
+    rows.map((row) => POINT_COLUMNS.map((column) =>
+      (column.kind === 'num' ? raw(column, row) : face(column, row)))),
+  );
+}
+
+/** 펼쳐 놓은 개소의 회차별 값.
+ *
+ * 기준이 바뀐 자리는 증분을 비우고 그 사실을 열로 낸다. 값이 '그 기준 대비
+ * 쌓인 양' 이라, 척도가 달라진 자리를 이어서 빼면 큰 폭의 하락으로 보인다.
+ */
+async function exportPointDetail() {
+  if (!state.point) { toast('개소를 먼저 연다', true); return; }
+  const rows = await api(
+    `/api/readings?point_id=${encodeURIComponent(state.point)}&order=captured_at&desc=false&limit=500`);
+  if (!rows.length) { toast('내보낼 판독 결과가 없다', true); return; }
+
+  let previousBaseline = null;
+  let previousValue = null;
+  const out = rows.map((row) => {
+    const changed = previousBaseline !== null && row.baseline_id !== previousBaseline;
+    const comparable = !changed && previousValue !== null && row.score_combined !== null;
+    const delta = comparable ? (row.score_combined - previousValue).toFixed(4) : '';
+    previousBaseline = row.baseline_id;
+    previousValue = row.success && row.score_combined !== null ? row.score_combined : previousValue;
+    if (changed) previousValue = row.success ? row.score_combined : null;
+
+    return [
+      row.sequence, stamp(row.captured_at), stamp(row.requested_at),
+      row.point_id, row.target_id,
+      row.baseline_id, changed ? '교체' : '',
+      row.success ? '성공' : '실패', row.failure_reason || '',
+      row.score_uniform, row.score_localized, row.score_combined, delta,
+      row.quality_sharpness, row.quality_saturated_ratio,
+      row.quality_pad_size_px, row.quality_pad_size_diff_ratio,
+      row.read_point_id, row.read_point_id === row.point_id ? '' : '불일치',
+      row.run_kind === 'rerun' ? '재판독' : '최초', row.elapsed_ms,
+    ];
+  });
+
+  downloadCsv(`point_${state.point}.csv`, [
+    '회차', '촬영일시', '판독요청일시', '개소', 'TARGET_ID', '기준ID', '기준교체',
+    '성공', '실패사유', 'uniform', 'localized', 'total', '직전대비',
+    '선명도', '포화비율', '패드크기', '크기차이',
+    '판독번호', '번호불일치', '실행구분', '처리시간ms',
+  ], out);
 }
 
 function backToList() {
@@ -546,20 +707,23 @@ function drawPointCharts(series) {
   const cuts = series.points
     .map((p, i) => (p.baseline_changed ? i : -1))
     .filter((i) => i >= 0);
+  // 호버로 볼 문구. 값만으로는 어느 회차인지 알 수 없다.
+  const tips = series.points.map((p) =>
+    `${p.sequence}회차 · ${stamp(p.captured_at)}${p.baseline_changed ? ' · 기준 교체' : ''}`);
   const notice = cuts.length
     ? `<p class="muted">기준 사진이 ${cuts.length}번 바뀌었다. 바뀐 자리에 세로선을 그었고, 그 앞뒤는 척도가 달라 증분과 누적을 잇지 않는다.</p>`
     : '';
   $('#p-charts').innerHTML = `
     <div class="card"><h3>절대량 · 그 회차의 기준 대비 총량</h3>
-      ${lineChart(at('absolute'), seq, null, false, cuts)}${notice}</div>
+      ${lineChart(at('absolute'), seq, null, false, cuts, tips)}${notice}</div>
     <div class="card"><h3>추세 · 직전 회차 대비 증분</h3>
-      ${lineChart(at('delta'), seq, series.limit, false, cuts)}
+      ${lineChart(at('delta'), seq, series.limit, false, cuts, tips)}
       <p class="muted">증분 중앙값 ${num(series.delta_median, 4)} · MAD ${num(series.delta_mad, 4)}${
         series.limit === null || series.limit === undefined
           ? ' · 경계 배수 n 을 넣으면 경계선을 그린다'
           : ` · 경계 ${num(series.limit, 4)}`}</p></div>
     <div class="card"><h3>누적 · 증분에서 여유를 뺀 값의 합</h3>
-      ${lineChart(at('cusum'), seq, null, true, cuts)}</div>`;
+      ${lineChart(at('cusum'), seq, null, true, cuts, tips)}</div>`;
 }
 
 function pointCard(row) {
@@ -604,7 +768,7 @@ async function openDetail(id) {
   }
 }
 
-function lineChart(values, labels, limit = null, alt = false, cuts = []) {
+function lineChart(values, labels, limit = null, alt = false, cuts = [], tips = []) {
   const width = 900, height = 240, pad = 36;
   const clean = values.map((v) => (v === null || v === undefined ? null : Number(v)));
   const known = clean.filter((v) => v !== null);
@@ -617,8 +781,12 @@ function lineChart(values, labels, limit = null, alt = false, cuts = []) {
 
   const path = clean.map((v, i) => (v === null ? null : `${x(i)},${y(v)}`))
     .filter(Boolean).join(' ');
+  // 점마다 보이지 않는 큰 원을 겹쳐 둔다. 반지름 3px 짜리를 정확히 짚기는
+  // 어렵고, 그래프가 가로로 늘어나면 더 어렵다.
   const dots = clean.map((v, i) => (v === null ? '' :
-    `<circle class="dot" cx="${x(i)}" cy="${y(v)}" r="3"><title>${labels[i]}회차 ${num(v, 4)}</title></circle>`)).join('');
+    `<circle class="dot" cx="${x(i)}" cy="${y(v)}" r="3"></circle>
+     <circle class="hit" cx="${x(i)}" cy="${y(v)}" r="12"
+       data-tip="${escape(tips[i] || `${labels[i]}회차`)} · ${num(v, 4)}"></circle>`)).join('');
   const limitLine = limit === null || limit === undefined ? '' :
     `<line class="limit" x1="${pad}" y1="${y(limit)}" x2="${width - pad}" y2="${y(limit)}"></line>`;
   // 기준이 바뀐 자리. 여기서 값의 척도가 갈린다.
@@ -791,7 +959,9 @@ function watch(runId) {
         <span class="badge ${done ? 'ok' : 'info'}"><i class="dot"></i>${done ? '완료' : '판독 중'}</span>
         <span>사진 ${run.done_captures} / ${run.total_captures} · 결과 ${run.reading_count}건</span>
       </div>
-      ${(run.notes || []).map((n) => `<div class="banner"><strong>${escape(n.kind)}</strong> ${escape(n.message)}</div>`).join('')}`;
+      ${(run.notes || []).map((n) => `<div class="banner">
+        <strong>${escape(n.original_name || `사진 #${n.capture_id}`)}</strong> ${escape(n.message)}
+      </div>`).join('')}`;
     if (done) {
       clearInterval(state.poll);
       $('#r-go').disabled = false;
@@ -1071,11 +1241,11 @@ function bind() {
   });
 
   $('#f-reset').addEventListener('click', () => {
-    state.colFilters = {};
-    state.sort = [{ key: 'captured_at', desc: true }];
+    state.tables.results.colFilters = {};
+    state.tables.results.sort = [{ key: 'captured_at', desc: true }];
     $('#f-preset').value = '';
     $('#f-drop').disabled = true;
-    drawReadings();
+    drawTable('results');
   });
   // 메뉴 밖을 누르면 닫는다.
   document.addEventListener('click', closeColumnMenu);
@@ -1101,8 +1271,29 @@ function bind() {
   $('#r-go').addEventListener('click', startRun);
 
   $('#p-back').addEventListener('click', backToList);
+  $('#p-csv-list').addEventListener('click', exportPointList);
+  $('#p-filter-reset').addEventListener('click', () => {
+    state.tables.points.colFilters = {};
+    state.tables.points.sort = [{ key: 'point_id', desc: false }];
+    drawTable('points');
+  });
+  $('#p-csv').addEventListener('click', () => exportPointDetail().catch((e) => toast(e.message, true)));
   $$('#p-metric,#p-n,#p-slack').forEach((node) =>
     node.addEventListener('change', () => loadPoint().catch((e) => toast(e.message, true))));
+
+  // 그래프 점에 얹으면 값을 띄운다. SVG 기본 툴팁은 뜨는 데 1초쯤 걸리고
+  // 촬영 일시까지 담기 어렵다.
+  const tip = $('#charttip');
+  document.addEventListener('mousemove', (event) => {
+    const hit = event.target.closest?.('svg.chart .hit');
+    if (!hit) { tip.hidden = true; return; }
+    tip.textContent = hit.dataset.tip;
+    tip.hidden = false;
+    // 화면 오른쪽 끝에서 잘리지 않게 왼쪽으로 접어 넣는다.
+    const flip = event.clientX + 16 + tip.offsetWidth > window.innerWidth;
+    tip.style.left = `${event.clientX + window.scrollX + (flip ? -tip.offsetWidth - 16 : 16)}px`;
+    tip.style.top = `${event.clientY + window.scrollY - 8}px`;
+  });
 
   // 사진을 눌러 크게 본다. 목록에서는 작게 늘어놓아야 회차끼리 견줘진다.
   const box = $('#lightbox');

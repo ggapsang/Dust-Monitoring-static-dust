@@ -93,6 +93,7 @@ def plan_jobs(
         notes.append(
             {
                 "capture_id": capture.id,
+                "original_name": capture.original_name,
                 "kind": "no_point",
                 "message": f"{capture.target_id} 에 등록된 개소가 없다",
             }
@@ -116,6 +117,7 @@ def plan_jobs(
                         else "촬영 일시에 유효한 기준 사진이 없어 요청에서 제외했다. "
                         "등록 시점을 대조하지 않으려면 판독 실행에서 그 항목을 켠다"
                     ),
+                    "original_name": capture.original_name,
                 }
             )
             continue
@@ -303,6 +305,7 @@ async def process_capture(
                         [
                             {
                                 "capture_id": capture_id,
+                                "original_name": capture.original_name,
                                 "tone": tone,
                                 "kind": "no_pad",
                                 "message": outcome.payload.get("summary")
@@ -336,6 +339,7 @@ def _note(
 ) -> None:
     with session_factory() as session:
         run = session.get(Run, run_id)
+        capture = session.get(Capture, capture_id)
         if run is None:
             return
         append_notes(
@@ -343,6 +347,7 @@ def _note(
             [
                 {
                     "capture_id": capture_id,
+                    "original_name": capture.original_name if capture else None,
                     "tone": tone,
                     "kind": kind,
                     "message": message,

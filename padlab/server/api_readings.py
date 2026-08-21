@@ -167,6 +167,7 @@ def _to_out(
         quality_pad_size_diff_ratio=reading.quality_pad_size_diff_ratio,
         read_point_id=reading.read_point_id,
         elapsed_ms=reading.elapsed_ms,
+        requested_at=run.executed_at,
         run_kind=run.kind,
         has_override=bool(run.config_override),
         images=images,

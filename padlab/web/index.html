@@ -109,20 +109,18 @@
   <h2>상세</h2>
 
   <div id="p-list-wrap">
+    <div class="card">
+      <div class="row">
+        <span class="muted grow">개소마다 최근 값과 변화량. 행을 누르면 그 개소의 회차가 펼쳐진다.</span>
+        <button class="ghost" id="p-filter-reset">필터 초기화</button>
+        <button class="ghost" id="p-csv-list">CSV 내보내기</button>
+      </div>
+      <p class="muted">열 이름을 누르면 그 열에서 정렬하고 값을 골라 거를 수 있다.</p>
+      <p class="muted" id="pt-count"></p>
+    </div>
     <div class="card" style="padding:0">
       <div class="scroll"><table id="t-points">
-        <thead><tr>
-          <th class="plain">개소</th><th class="plain">명칭</th>
-          <th class="plain mid">촬영 단위</th><th class="plain mid">톤</th>
-          <th class="plain mid">기준 사진</th>
-          <th class="num plain mid">전체 회차</th>
-          <th class="num plain mid">현 기준 회차</th>
-          <th class="num plain mid">최근 total</th>
-          <th class="num plain mid">직전 대비</th>
-          <th class="num plain mid">회차당 평균</th>
-          <th class="num plain mid">현 기준 부착 이후</th>
-          <th class="plain mid">최근 촬영</th>
-        </tr></thead>
+        <thead><tr id="pt-head"></tr></thead>
         <tbody></tbody>
       </table></div>
       <div class="empty" id="p-list-empty">등록된 개소가 없다.</div>
@@ -142,6 +140,7 @@
           </select></label>
         <label class="field">경계 배수 n<input type="number" id="p-n" step="0.5" placeholder="비우면 안 그림" style="width:110px"></label>
         <label class="field">CUSUM 여유<input type="number" id="p-slack" step="0.01" value="0" style="width:110px"></label>
+        <button class="ghost" id="p-csv">CSV 내보내기</button>
       </div>
       <p class="muted">회차별 사진을 위아래로 이어 놓고 추이를 함께 본다. 개소마다 감도가 달라 개소 간 값은 직접 견주지 않는다.</p>
     </div>
@@ -242,6 +241,7 @@
 </main>
 
 <div id="lightbox" hidden><img alt=""></div>
+<div id="charttip" hidden></div>
 <script src="app.js"></script>
 </body>
 </html>
