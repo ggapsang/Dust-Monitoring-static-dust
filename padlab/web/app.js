@@ -1296,17 +1296,82 @@ function bind() {
   });
 
   // 사진을 눌러 크게 본다. 목록에서는 작게 늘어놓아야 회차끼리 견줘진다.
+  // 확대된 사진 자체도 휠로 더 확대하고 드래그로 이동할 수 있다 - 분진
+  // 얼룩처럼 작은 것을 보려면 크게 띄운 것만으로는 부족할 때가 있다.
   const box = $('#lightbox');
+  const bigImg = $('img', box);
+  const zoom = { scale: 1, panX: 0, panY: 0, dragging: false, startX: 0, startY: 0 };
+
+  const applyZoom = () => {
+    bigImg.style.transform = `translate(${zoom.panX}px, ${zoom.panY}px) scale(${zoom.scale})`;
+    bigImg.classList.toggle('zoomed', zoom.scale > 1);
+  };
+  const resetZoom = () => {
+    zoom.scale = 1; zoom.panX = 0; zoom.panY = 0;
+    applyZoom();
+  };
+
   document.addEventListener('click', (event) => {
     const img = event.target.closest?.('.shot img');
     if (!img) return;
-    $('img', box).src = img.src;
+    bigImg.src = img.src;
+    resetZoom();
     box.hidden = false;
   });
-  box.addEventListener('click', () => { box.hidden = true; });
+
+  // 배경을 눌렀을 때만 닫는다. 사진 위는 드래그로 이동하는 자리라 클릭으로
+  // 닫히면 이동하려다 매번 창이 닫힌다.
+  box.addEventListener('click', (event) => {
+    if (event.target === box) box.hidden = true;
+  });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') box.hidden = true;
   });
+
+  // 휠로 확대·축소한다. 커서가 가리키는 지점이 화면에서 그대로 있도록
+  // 확대 배율이 바뀔 때 이동값을 같이 보정한다 - 그냥 중앙 기준으로
+  // 키우면 보고 싶은 지점이 화면 밖으로 밀려난다.
+  box.addEventListener('wheel', (event) => {
+    if (box.hidden) return;
+    event.preventDefault();
+    const rect = bigImg.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const offsetX = event.clientX - cx;
+    const offsetY = event.clientY - cy;
+
+    const factor = event.deltaY < 0 ? 1.25 : 1 / 1.25;
+    const next = Math.min(8, Math.max(1, zoom.scale * factor));
+    const applied = next / zoom.scale;
+    zoom.panX += offsetX * (1 - applied);
+    zoom.panY += offsetY * (1 - applied);
+    zoom.scale = next;
+    if (zoom.scale === 1) { zoom.panX = 0; zoom.panY = 0; }
+    applyZoom();
+  }, { passive: false });
+
+  // 드래그로 옮긴다. 포인터 이벤트를 쓰면 마우스든 터치든 같은 코드로
+  // 된다.
+  bigImg.addEventListener('pointerdown', (event) => {
+    zoom.dragging = true;
+    zoom.startX = event.clientX - zoom.panX;
+    zoom.startY = event.clientY - zoom.panY;
+    bigImg.setPointerCapture(event.pointerId);
+    bigImg.classList.add('dragging');
+  });
+  bigImg.addEventListener('pointermove', (event) => {
+    if (!zoom.dragging) return;
+    zoom.panX = event.clientX - zoom.startX;
+    zoom.panY = event.clientY - zoom.startY;
+    applyZoom();
+  });
+  const endDrag = () => { zoom.dragging = false; bigImg.classList.remove('dragging'); };
+  bigImg.addEventListener('pointerup', endDrag);
+  bigImg.addEventListener('pointercancel', endDrag);
+
+  // 더블클릭으로 원래 크기로 되돌린다. 확대한 채로 다음 사진을 열면
+  // 이미 resetZoom 이 도니 여기서는 지금 보는 사진을 되돌리는 용도다.
+  bigImg.addEventListener('dblclick', resetZoom);
   $('#x-load').addEventListener('click', () => loadDistribution().catch((e) => toast(e.message, true)));
   $('#h-load').addEventListener('click', () => loadBaselineHistory().catch((e) => toast(e.message, true)));
 

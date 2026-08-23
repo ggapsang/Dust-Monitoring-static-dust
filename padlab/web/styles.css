@@ -373,9 +373,20 @@ th.picked { color: var(--text-brand); }
   display: flex; align-items: center; justify-content: center;
   background: rgba(12, 10, 9, 0.82);
   padding: 32px; cursor: zoom-out;
+  /* 확대된 사진을 휠로 더 키울 때 배경까지 같이 스크롤되지 않게 한다. */
+  overscroll-behavior: contain;
 }
 #lightbox[hidden] { display: none; }
 #lightbox img {
   max-width: 100%; max-height: 100%;
   border-radius: 8px; box-shadow: var(--shadow-4);
+  /* 확대·이동은 JS 가 transform 으로 직접 준다. 중앙을 기준으로 키워야
+     휠 확대 때의 보정 계산과 맞는다. */
+  transform-origin: center center;
+  cursor: zoom-in;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
+#lightbox img.zoomed { cursor: grab; }
+#lightbox img.dragging { cursor: grabbing; }
