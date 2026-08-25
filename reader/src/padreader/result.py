@@ -51,6 +51,20 @@ class FailureReason(str, Enum):
     INVALID_IMAGE = "invalid_image"
     """이미지를 읽을 수 없거나 형식이 지원되지 않는다."""
 
+    ANCHOR_CLIPPED = "anchor_clipped"
+    """유채색 패드의 2톤 앵커 패치에서 어느 채널이 포화(255) 또는 바닥(0) 에
+    붙었다. 채널별 정규화가 성립하지 않으므로 조용히 잘못된 값을 내지 않고
+    판독 전체를 실패로 남긴다."""
+
+    ANCHOR_SPAN_INVALID = "anchor_span_invalid"
+    """유채색 앵커의 백색 패치가 흑색 패치보다 밝지 않은 채널이 있다.
+    정규화의 분모가 0 이하가 되어 성립하지 않는다."""
+
+    PAD_TYPE_MISMATCH = "pad_type_mismatch"
+    """판독 사진과 기준 사진의 패드 종류(무채색/유채색)가 다르게 판별됐다.
+    같은 개소인데 패드가 통째로 바뀐 것이 아니라면 판별 자체가 흔들린
+    경계 사례이므로, 섞어서 비교하지 않고 실패로 남긴다."""
+
 
 class ExclusionReason(str, Enum):
     """분진 판정에서 빠진 사유."""
@@ -248,6 +262,73 @@ class NormalizationInfo:
 
 
 @dataclass
+class ChromaFieldScore:
+    """``chroma``/``luma_dark``/``luma_light`` 가 공유하는 형태.
+
+    임계값이 없다. ``sum`` 은 노출 영역 전체 화소의 변화량을 부호 그대로
+    더한 것이고, ``mean`` 은 그것을 노출 영역 픽셀 수로 나눈 등가 깊이,
+    ``score`` 는 그 제곱근(선형 차원)이다. ``mean`` 이 음수면 ``score`` 는 0 -
+    판독이 기준보다 전체적으로 옅어진 경우이며 오염으로 보지 않는다.
+    """
+
+    sum: float | None = None
+    mean: float | None = None
+    score: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"sum": _f(self.sum), "mean": _f(self.mean), "score": _f(self.score)}
+
+
+@dataclass
+class ChromaNormalizationInfo:
+    """유채색 패드의 2톤 앵커 채널별 정규화 성립 여부.
+
+    ``uniform``/``localized``/``combined`` 가 쓰는 ``normalization`` 필드와는
+    다르다 - 그건 테두리 하나로 미는 조명 평면 진단이고, 이건 흑·백 앵커
+    두 점으로 채널마다(R·G·B) 게인·바닥값·화이트밸런스를 지우는 유채색
+    전용 보정의 성패다."""
+
+    success: bool = False
+    failure_reason: str | None = None
+    """실패 이유(``FailureReason`` 값). 성공하면 ``None``."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"success": self.success, "failure_reason": self.failure_reason}
+
+
+@dataclass
+class ChromaDiagnostics:
+    """유채색 지표가 튈 때 원인을 가리는 참고값. 판정에 쓰지 않는다."""
+
+    roi_mean_reading: dict[str, float | None] | None = None
+    """노출 영역의 판독 사진 평균(채널별, 앵커로 정규화된 반사율)."""
+
+    roi_mean_baseline: dict[str, float | None] | None = None
+
+    anchor_values: dict[str, Any] | None = None
+    """앵커 4개 패치의 원값(raw, 채널별). 판독/기준 각각의 흑·백 앵커 관측값 -
+    이 값이 서로 이상하게 가까우면(백-흑 폭이 좁으면) 정규화 자체가 불안정
+    하다는 뜻이다."""
+
+    pad_scale: float | None = None
+    """정합 시 원본 패드 크기 대비 확대 배율. 촬영 거리의 대리 지표."""
+
+    clipped_ratio: dict[str, float | None] | None = None
+    """노출 영역 전체에서 채널별로 포화(255)·바닥(0) 화소가 차지하는 비율.
+    앵커 클리핑과 달리 이것만으로는 판독을 실패시키지 않는다 - 노출 영역
+    일부의 국소 클리핑은 그 화소만 이상값이 될 뿐 정규화 자체를 깨지 않는다."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "roi_mean_reading": self.roi_mean_reading,
+            "roi_mean_baseline": self.roi_mean_baseline,
+            "anchor_values": self.anchor_values,
+            "pad_scale": _f(self.pad_scale),
+            "clipped_ratio": self.clipped_ratio,
+        }
+
+
+@dataclass
 class PadReadResult:
     """패드 하나의 판독 결과."""
 
@@ -265,6 +346,19 @@ class PadReadResult:
     quality: QualityMetrics = field(default_factory=QualityMetrics)
     normalization: NormalizationInfo = field(default_factory=NormalizationInfo)
     optical_density: OpticalDensityScores = field(default_factory=OpticalDensityScores)
+
+    pad_type: str | None = None
+    """판별된 패드 종류. ``mono`` 또는 ``chroma``. 무채색 경로만 강제했으면
+    (``mode="legacy"``) 판별 자체를 하지 않고 항상 ``mono`` 다."""
+
+    chroma_normalization: ChromaNormalizationInfo = field(default_factory=ChromaNormalizationInfo)
+    chroma: ChromaFieldScore = field(default_factory=ChromaFieldScore)
+    """채도 감소 기반. 무채색 패드거나 정규화에 실패했으면 전부 ``None``."""
+    luma_dark: ChromaFieldScore = field(default_factory=ChromaFieldScore)
+    """명도 감소(흑색 분진 방향) 기반."""
+    luma_light: ChromaFieldScore = field(default_factory=ChromaFieldScore)
+    """명도 증가(백색 분진 방향) 기반."""
+    chroma_diagnostics: ChromaDiagnostics = field(default_factory=ChromaDiagnostics)
 
     point_id: str | None = None
     point_id_status: PointIdStatus = PointIdStatus.DISABLED
@@ -314,6 +408,12 @@ class PadReadResult:
             "quality": self.quality.to_dict(),
             "normalization": self.normalization.to_dict(),
             "optical_density": self.optical_density.to_dict(),
+            "pad_type": self.pad_type,
+            "chroma_normalization": self.chroma_normalization.to_dict(),
+            "chroma": self.chroma.to_dict(),
+            "luma_dark": self.luma_dark.to_dict(),
+            "luma_light": self.luma_light.to_dict(),
+            "chroma_diagnostics": self.chroma_diagnostics.to_dict(),
             "point_id": self.point_id,
             "point_id_raw": self.point_id_raw,
             "point_id_status": self.point_id_status.value,

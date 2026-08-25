@@ -183,6 +183,11 @@ class ReadingOut(BaseModel):
     roi_mean_baseline: float | None = None
     pad_scale: float | None = None
 
+    pad_type: str | None = None
+    chroma_score: float | None = None
+    luma_dark_score: float | None = None
+    luma_light_score: float | None = None
+
     requested_at: datetime | None = Field(
         default=None, description="판독을 요청한(실행을 시작한) 일시"
     )

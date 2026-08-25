@@ -45,6 +45,9 @@ METRICS: dict[str, Any] = {
     "quality_pad_size_diff_ratio": Reading.quality_pad_size_diff_ratio,
     "elapsed_ms": Reading.elapsed_ms,
     "od_score": Reading.od_score,
+    "chroma_score": Reading.chroma_score,
+    "luma_dark_score": Reading.luma_dark_score,
+    "luma_light_score": Reading.luma_light_score,
 }
 """분포·시계열에서 고를 수 있는 지표. 응답에 실제로 실려 오는 것만 둔다."""
 
@@ -72,6 +75,10 @@ CSV_COLUMNS = [
     ("roi_mean_reading", "roi_mean_reading(시험)"),
     ("roi_mean_baseline", "roi_mean_baseline(시험)"),
     ("pad_scale", "pad_scale(시험)"),
+    ("pad_type", "패드종류(시험)"),
+    ("chroma_score", "chroma.score(시험)"),
+    ("luma_dark_score", "luma_dark.score(시험)"),
+    ("luma_light_score", "luma_light.score(시험)"),
 ]
 
 
@@ -180,6 +187,10 @@ def _to_out(
         roi_mean_reading=reading.roi_mean_reading,
         roi_mean_baseline=reading.roi_mean_baseline,
         pad_scale=reading.pad_scale,
+        pad_type=reading.pad_type,
+        chroma_score=reading.chroma_score,
+        luma_dark_score=reading.luma_dark_score,
+        luma_light_score=reading.luma_light_score,
         requested_at=run.executed_at,
         run_kind=run.kind,
         has_override=bool(run.config_override),

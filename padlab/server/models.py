@@ -125,6 +125,12 @@ class Reading(Base):
     roi_mean_baseline: Mapped[float | None] = mapped_column(Float)
     pad_scale: Mapped[float | None] = mapped_column(Float)
 
+    # 유채색(마젠타) 패드. 시험 경로 - 기존 흑백 경로는 그대로 둔다.
+    pad_type: Mapped[str | None] = mapped_column(Text)
+    chroma_score: Mapped[float | None] = mapped_column(Float)
+    luma_dark_score: Mapped[float | None] = mapped_column(Float)
+    luma_light_score: Mapped[float | None] = mapped_column(Float)
+
     response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     img_baseline_rectified: Mapped[str | None] = mapped_column(Text)
     img_rectified: Mapped[str | None] = mapped_column(Text)

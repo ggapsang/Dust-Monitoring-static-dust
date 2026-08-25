@@ -52,6 +52,14 @@ class ReadPathRequest(BaseModel):
         default=None,
         description="설정 일부 덮어쓰기. 비워 두면 서버 설정을 그대로 쓴다.",
     )
+    mode: str = Field(
+        default="auto",
+        description=(
+            "'auto'(기본) 면 패드 종류(무채색/유채색)를 판별해 유채색이면 새 "
+            "경로도 함께 낸다. 'legacy' 면 판별하지 않고 기존 무채색 경로만 "
+            "돈다."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -105,6 +113,37 @@ class OpticalDensityModel(BaseModel):
     pad_scale: float | None = Field(default=None, description="정합 시 원본 패드 크기 대비 확대 배율")
 
 
+class ChromaFieldScoreModel(BaseModel):
+    """``chroma``/``luma_dark``/``luma_light`` 가 공유하는 형태. 임계값 없음."""
+
+    sum: float | None = Field(default=None, description="노출 영역 전체의 변화량 합. 부호 그대로")
+    mean: float | None = Field(default=None, description="sum / 노출 영역 픽셀 수")
+    score: float | None = Field(default=None, description="sqrt(mean), 음수면 0")
+
+
+class ChromaNormalizationModel(BaseModel):
+    """유채색 패드 2톤 앵커 채널별 정규화의 성패."""
+
+    success: bool = False
+    failure_reason: str | None = Field(default=None, description="실패 이유. 성공하면 null")
+
+
+class ChromaDiagnosticsModel(BaseModel):
+    """유채색 지표가 튈 때 원인을 가리는 참고값. 판정에 쓰지 않는다."""
+
+    roi_mean_reading: dict[str, float | None] | None = Field(
+        default=None, description="노출 영역의 판독 사진 평균(채널별, 정규화 반사율)"
+    )
+    roi_mean_baseline: dict[str, float | None] | None = None
+    anchor_values: dict[str, Any] | None = Field(
+        default=None, description="앵커 4개 패치의 원값(채널별). 판독/기준 각각"
+    )
+    pad_scale: float | None = Field(default=None, description="정합 시 원본 패드 크기 대비 확대 배율")
+    clipped_ratio: dict[str, float | None] | None = Field(
+        default=None, description="노출 영역 전체에서 채널별 포화·바닥 화소 비율"
+    )
+
+
 class PadResult(BaseModel):
     """패드 하나의 판독 결과."""
 
@@ -131,6 +170,26 @@ class PadResult(BaseModel):
     scores: ScoresModel = ScoresModel()
     quality: QualityModel = QualityModel()
     optical_density: OpticalDensityModel = OpticalDensityModel()
+
+    pad_type: str | None = Field(
+        default=None, description="판별된 패드 종류. 'mono' 또는 'chroma'"
+    )
+    chroma_normalization: ChromaNormalizationModel | None = Field(
+        default=None, description="유채색 앵커 정규화 성패. 무채색이면 null(시도 자체를 안 함)"
+    )
+    chroma: ChromaFieldScoreModel | None = Field(
+        default=None, description="채도 감소 기반. 무채색이면 null"
+    )
+    luma_dark: ChromaFieldScoreModel | None = Field(
+        default=None, description="명도 감소(흑색 분진 방향) 기반. 무채색이면 null"
+    )
+    luma_light: ChromaFieldScoreModel | None = Field(
+        default=None, description="명도 증가(백색 분진 방향) 기반. 무채색이면 null"
+    )
+    chroma_diagnostics: ChromaDiagnosticsModel | None = Field(
+        default=None, description="유채색 진단값. 무채색이면 null"
+    )
+
     excluded_px: dict[str, int] = Field(
         default={}, description="분진 판정에서 빠진 픽셀 수. 사유별"
     )
@@ -208,6 +267,9 @@ FAILURE_LABELS: dict[str, str] = {
     "baseline_unreadable": "기준 이미지를 판독하지 못함",
     "pad_size_mismatch": "기준 이미지와 패드 크기가 크게 다름",
     "baseline_pad_missing": "기준 이미지에 같은 번호의 패드가 없음",
+    "anchor_clipped": "유채색 앵커 화소가 포화·바닥에 붙어 정규화 불가",
+    "anchor_span_invalid": "유채색 앵커의 백/흑 폭이 성립하지 않음",
+    "pad_type_mismatch": "판독과 기준의 패드 종류가 다르게 판별됨",
 }
 
 
@@ -266,11 +328,22 @@ def build_summary(payload: dict[str, Any]) -> str:
     return f"패드 {len(pads)}개 판독 · " + " · ".join(parts) + tail
 
 
+def _field_score(raw: dict[str, Any] | None) -> ChromaFieldScoreModel | None:
+    if not raw:
+        return None
+    return ChromaFieldScoreModel(
+        sum=_r(raw.get("sum"), 5), mean=_r(raw.get("mean"), 6), score=_r(raw.get("score"), 5)
+    )
+
+
 def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
     """패드 하나의 판독 결과를 응답 모델로."""
     scores = pad.get("scores") or {}
     quality = pad.get("quality") or {}
     od = pad.get("optical_density") or {}
+    pad_type = pad.get("pad_type")
+    chroma_norm = pad.get("chroma_normalization") or {}
+    diag = pad.get("chroma_diagnostics") or {}
     return PadResult(
         success=pad["success"],
         summary=pad_summary(pad),
@@ -294,6 +367,29 @@ def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
             roi_mean_reading=_r(od.get("roi_mean_reading"), 4),
             roi_mean_baseline=_r(od.get("roi_mean_baseline"), 4),
             pad_scale=_r(od.get("pad_scale"), 3),
+        ),
+        pad_type=pad_type,
+        chroma_normalization=(
+            ChromaNormalizationModel(
+                success=bool(chroma_norm.get("success")),
+                failure_reason=chroma_norm.get("failure_reason"),
+            )
+            if pad_type == "chroma"
+            else None
+        ),
+        chroma=_field_score(pad.get("chroma")) if pad_type == "chroma" else None,
+        luma_dark=_field_score(pad.get("luma_dark")) if pad_type == "chroma" else None,
+        luma_light=_field_score(pad.get("luma_light")) if pad_type == "chroma" else None,
+        chroma_diagnostics=(
+            ChromaDiagnosticsModel(
+                roi_mean_reading=diag.get("roi_mean_reading"),
+                roi_mean_baseline=diag.get("roi_mean_baseline"),
+                anchor_values=diag.get("anchor_values"),
+                pad_scale=_r(diag.get("pad_scale"), 3),
+                clipped_ratio=diag.get("clipped_ratio"),
+            )
+            if pad_type == "chroma"
+            else None
         ),
         excluded_px=pad.get("excluded_px") or {},
         failure_reason=pad.get("failure_reason"),

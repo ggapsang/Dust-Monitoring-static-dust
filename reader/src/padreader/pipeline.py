@@ -30,6 +30,15 @@ from typing import Any, Mapping
 import cv2
 import numpy as np
 
+from .chroma import (
+    channel_normalize,
+    channel_means,
+    classify_pad_type,
+    clipped_ratio,
+    field_score,
+    luma_of,
+    saturation_of,
+)
 from .config import Config, PointIdConfig, load_config
 from .detect import Detection, detect_pads
 from .dust import DustMap, extract_dust
@@ -38,7 +47,14 @@ from .optical_density import compute_optical_density
 from .orient import apply_rotation, determine_orientation
 from .quality import check_gates, measure_quality
 from .rectify import rectify
-from .result import FailureReason, PadReadBatch, PadReadResult, QualityMetrics
+from .result import (
+    ChromaDiagnostics,
+    ChromaNormalizationInfo,
+    FailureReason,
+    PadReadBatch,
+    PadReadResult,
+    QualityMetrics,
+)
 from .score import compute_scores
 from .spec import PadSpec, get_spec
 from .point_id import extract_glyphs, match_score, read_point_id
@@ -64,6 +80,15 @@ class _Analysis:
     normalization_scale: float | None
     """이 사진의 테두리 밝기(raw 0-255 척도). ``reflectance = gray/이 값``.
     광학밀도 지표의 8비트 양자화 하한을 reflectance 척도로 되돌리는 데 쓴다."""
+    pad_type: str
+    """판별된 패드 종류. ``mono`` 또는 ``chroma``."""
+    chroma_reflectance: np.ndarray | None
+    """2톤 앵커로 채널별 정규화한 반사율(정합 이미지 전체 크기). ``mono`` 이거나
+    앵커 정규화에 실패했으면 ``None``."""
+    chroma_failure: FailureReason | None
+    """유채색인데 앵커 정규화에 실패했으면 그 사유. 그 외에는 ``None``."""
+    chroma_anchor_values: dict[str, Any] | None
+    """앵커 두 패치의 raw 관측값(채널별). 정규화 성공 시에만 채운다."""
     point_id: str | None
     point_id_status: Any
     point_id_confidence: float | None
@@ -96,7 +121,7 @@ def load_image(image: Any) -> np.ndarray | None:
 
 
 def _analyze_all(
-    bgr: np.ndarray, tone: str, cfg: Config, spec: PadSpec
+    bgr: np.ndarray, tone: str, cfg: Config, spec: PadSpec, mode: str = "auto"
 ) -> list[_Analysis]:
     """사진에서 찾은 패드를 전부 분진 추출까지 처리한다.
 
@@ -106,7 +131,7 @@ def _analyze_all(
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     out: list[_Analysis] = []
     for detection in detect_pads(gray, tone, cfg.detect, spec.border_thickness):
-        found, _ = _analyze(bgr, gray, detection, tone, cfg, spec)
+        found, _ = _analyze(bgr, gray, detection, tone, cfg, spec, mode)
         if found is not None:
             out.append(found)
     return out
@@ -119,6 +144,7 @@ def _analyze(
     tone: str,
     cfg: Config,
     spec: PadSpec,
+    mode: str = "auto",
 ) -> tuple[_Analysis | None, tuple[FailureReason, str] | None]:
     """검출된 패드 하나를 분진 추출까지 처리한다. 실패하면 (None, 사유)."""
     size = cfg.pad_size_px
@@ -140,6 +166,22 @@ def _analyze(
     corners = apply_rotation(detection.corners, orientation.rotation_index)
     rectified_bgr, _ = rectify(bgr, corners, size)
     rectified_gray = cv2.cvtColor(rectified_bgr, cv2.COLOR_BGR2GRAY)
+
+    # 유채색 패드 판별과 앵커 정규화. mode="legacy" 면 시도조차 하지 않고
+    # 무채색 경로만 돈다 - 기존 흑백 판독 결과가 이 기능 추가로 바뀌면 안 된다.
+    pad_type = "mono"
+    chroma_reflectance: np.ndarray | None = None
+    chroma_failure: FailureReason | None = None
+    chroma_anchor_values: dict[str, Any] | None = None
+    if mode != "legacy":
+        pad_type, _saturation = classify_pad_type(
+            rectified_bgr, spec, size, cfg.chroma.saturation_threshold
+        )
+        if pad_type == "chroma":
+            channel_norm, chroma_failure = channel_normalize(rectified_bgr, size)
+            if channel_norm is not None:
+                chroma_reflectance = channel_norm.reflectance
+                chroma_anchor_values = channel_norm.anchor_values
 
     normalization = normalize(rectified_gray, spec, cfg.normalize, size)
     if normalization is None:
@@ -174,6 +216,10 @@ def _analyze(
             rectified_gray=rectified_gray,
             reflectance=normalization.reflectance,
             normalization_scale=normalization.scale,
+            pad_type=pad_type,
+            chroma_reflectance=chroma_reflectance,
+            chroma_failure=chroma_failure,
+            chroma_anchor_values=chroma_anchor_values,
             point_id=target_value,
             point_id_status=target_status,
             point_id_confidence=target_confidence,
@@ -243,6 +289,7 @@ def read_pads(
     overrides: Mapping[str, Any] | None = None,
     visualize: bool = False,
     expected_ids: list[str] | None = None,
+    mode: str = "auto",
 ) -> PadReadBatch:
     """기준 사진과 견주어 판독 사진에 찍힌 **모든** 패드의 오염도를 낸다.
 
@@ -268,6 +315,11 @@ def read_pads(
         ``black`` = 흑색 바탕/백색 인쇄(백색 분진용).
     visualize
         패드마다 기준 정합, 판독 정합, 오염도 분포 이미지를 담을지.
+    mode
+        ``"auto"``(기본) 면 패드 종류(무채색/유채색)를 판별해 유채색이면
+        새 경로도 함께 낸다. ``"legacy"`` 면 판별 자체를 하지 않고 항상
+        기존 무채색 경로만 돈다 - 유채색 패드가 와도 색을 못 본 것처럼
+        처리한다.
     """
     started = time.perf_counter()
 
@@ -305,13 +357,13 @@ def read_pads(
             return finish(PadReadBatch.failed(
                 FailureReason.INVALID_IMAGE,
                 f"기준 이미지를 읽을 수 없다 ({index + 1}번째)"))
-        bases.extend(_analyze_all(baseline_bgr, pad_tone, cfg, spec))
+        bases.extend(_analyze_all(baseline_bgr, pad_tone, cfg, spec, mode))
 
     if not bases:
         return finish(PadReadBatch.failed(
             FailureReason.BASELINE_UNREADABLE, "기준 이미지에서 패드를 판독하지 못했다"))
 
-    readings = _analyze_all(reading_bgr, pad_tone, cfg, spec)
+    readings = _analyze_all(reading_bgr, pad_tone, cfg, spec, mode)
     if not readings:
         return finish(PadReadBatch.failed(
             FailureReason.PAD_NOT_FOUND, "판독 이미지에서 패드를 판독하지 못했다"))
@@ -376,6 +428,13 @@ def _compare(
             **partial,
         )
 
+    if reading.pad_type != base.pad_type:
+        return PadReadResult.failed(
+            FailureReason.PAD_TYPE_MISMATCH,
+            f"판독은 {reading.pad_type}, 기준은 {base.pad_type} 로 판별됐다",
+            **partial,
+        )
+
     # 두 사진의 패드 크기가 크게 다르면 촬영 위치가 달라진 것이다.
     limit = cfg.quality.max_pad_size_diff_ratio
     reading_size = reading.quality.pad_size_px or 0.0
@@ -418,6 +477,53 @@ def _compare(
         (cfg.pad_size_px / reading_size) if reading_size > 0 else None
     )
 
+    chroma_normalization = ChromaNormalizationInfo()
+    chroma_score = None
+    luma_dark_score = None
+    luma_light_score = None
+    chroma_diagnostics = ChromaDiagnostics()
+
+    if reading.pad_type == "chroma":
+        failure = reading.chroma_failure or base.chroma_failure
+        if failure is not None:
+            return PadReadResult.failed(
+                failure,
+                "유채색 패드의 앵커 정규화가 성립하지 않는다",
+                **partial,
+            )
+
+        reading_region = reading.chroma_reflectance[oy : oy + mh, ox : ox + mw]
+        base_region = base.chroma_reflectance[oy : oy + mh, ox : ox + mw]
+
+        reading_luma = luma_of(reading_region)
+        base_luma = luma_of(base_region)
+        reading_sat = saturation_of(reading_region)
+        base_sat = saturation_of(base_region)
+
+        # 채도가 줄어든 양이 오염량. 부호 그대로(임계값 없이) 합산한다.
+        chroma_score = field_score(base_sat - reading_sat, measurable)
+
+        # 명도는 흑색 분진(감소)과 백색 분진(증가)이 서로 상쇄되므로 방향을
+        # 갈라 각각 낸다. 분모(N)는 두 방향 모두 노출 영역 전체 픽셀 수로
+        # 같다 - 한쪽 방향의 국소 변화라도 전체 면적 대비 등가 깊이를 낸다.
+        luma_diff = base_luma - reading_luma  # 양수=어두워짐
+        luma_dark_score = field_score(np.where(luma_diff > 0, luma_diff, 0.0), measurable)
+        luma_light_score = field_score(np.where(luma_diff < 0, -luma_diff, 0.0), measurable)
+
+        chroma_normalization = ChromaNormalizationInfo(success=True)
+        chroma_diagnostics = ChromaDiagnostics(
+            roi_mean_reading=channel_means(reading_region, measurable),
+            roi_mean_baseline=channel_means(base_region, measurable),
+            anchor_values={
+                "reading": reading.chroma_anchor_values,
+                "baseline": base.chroma_anchor_values,
+            },
+            pad_scale=optical_density.pad_scale,
+            clipped_ratio=clipped_ratio(
+                reading.rectified[oy : oy + mh, ox : ox + mw]
+            ),
+        )
+
     kept = blobs if cfg.dust.max_blobs is None else blobs[: cfg.dust.max_blobs]
     result = PadReadResult(
         success=True,
@@ -428,6 +534,12 @@ def _compare(
         excluded_px=reading.dust.excluded_pixels,
         pad_size_diff_ratio=size_diff,
         optical_density=optical_density,
+        pad_type=reading.pad_type,
+        chroma_normalization=chroma_normalization,
+        **({"chroma": chroma_score} if chroma_score is not None else {}),
+        **({"luma_dark": luma_dark_score} if luma_dark_score is not None else {}),
+        **({"luma_light": luma_light_score} if luma_light_score is not None else {}),
+        chroma_diagnostics=chroma_diagnostics,
         **partial,
     )
 
@@ -456,6 +568,7 @@ def read_pad(
     overrides: Mapping[str, Any] | None = None,
     visualize: bool = False,
     expected_ids: list[str] | None = None,
+    mode: str = "auto",
 ) -> PadReadResult:
     """가장 크게 찍힌 패드 하나만 돌려준다.
 
@@ -463,5 +576,5 @@ def read_pad(
     수 있는 사진이면 ``read_pads`` 를 쓴다.
     """
     return read_pads(
-        image, baseline, pad_tone, config, overrides, visualize, expected_ids
+        image, baseline, pad_tone, config, overrides, visualize, expected_ids, mode
     ).first

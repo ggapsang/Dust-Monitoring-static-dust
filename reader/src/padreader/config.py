@@ -172,6 +172,21 @@ class DustConfig:
 
 
 @dataclass
+class ChromaConfig:
+    """유채색(마젠타) 패드 판독. 시험 경로 - 기존 흑백 경로는 그대로 둔다."""
+
+    saturation_threshold: float = 0.35
+    """패드 종류 판별 기준. 정합 후 측정 여백의 (max-min)/max 중앙값이 이보다
+    크면 유채색으로 본다.
+
+    무채색 실촬영 77장(136개 검출)에서 실측한 값(최댓값 0.1843, 중앙값
+    0.0379)과 마젠타 인쇄 자체의 채도(도안 원본 실측 1.0) 사이의 중간값이다 -
+    유채색 쪽은 아직 실촬영으로 뒷받침되지 않았다. ``chroma.py`` 의
+    ``PAD_TYPE_SATURATION_THRESHOLD`` 주석에 상세 근거가 있다.
+    """
+
+
+@dataclass
 class ScoreConfig:
     uniform_reference: float | None = None
     """uniform 스코어가 1.0 이 되는 값. ``null`` 이면 원값을 그대로 0-1 로
@@ -241,6 +256,7 @@ class Config:
     quality: QualityConfig = field(default_factory=QualityConfig)
     normalize: NormalizeConfig = field(default_factory=NormalizeConfig)
     dust: DustConfig = field(default_factory=DustConfig)
+    chroma: ChromaConfig = field(default_factory=ChromaConfig)
     score: ScoreConfig = field(default_factory=ScoreConfig)
     visualize: VisualizeConfig = field(default_factory=VisualizeConfig)
     lines: LinesConfig = field(default_factory=LinesConfig)
@@ -269,6 +285,7 @@ _SECTIONS: dict[str, type] = {
     "quality": QualityConfig,
     "normalize": NormalizeConfig,
     "dust": DustConfig,
+    "chroma": ChromaConfig,
     "score": ScoreConfig,
     "visualize": VisualizeConfig,
     "lines": LinesConfig,

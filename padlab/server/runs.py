@@ -171,6 +171,9 @@ def store_reading(
     scores = pad.get("scores") or {}
     quality = pad.get("quality") or {}
     od = pad.get("optical_density") or {}
+    chroma = pad.get("chroma") or {}
+    luma_dark = pad.get("luma_dark") or {}
+    luma_light = pad.get("luma_light") or {}
 
     reading = Reading(
         run_id=run_id,
@@ -198,6 +201,10 @@ def store_reading(
         roi_mean_reading=od.get("roi_mean_reading"),
         roi_mean_baseline=od.get("roi_mean_baseline"),
         pad_scale=od.get("pad_scale"),
+        pad_type=pad.get("pad_type"),
+        chroma_score=chroma.get("score"),
+        luma_dark_score=luma_dark.get("score"),
+        luma_light_score=luma_light.get("score"),
         response=pad,
         created_at=datetime.now(timezone.utc),
     )

@@ -201,6 +201,7 @@ def _run(
     overrides: dict[str, Any],
     visualize: bool,
     expected_ids: list[str] | None = None,
+    mode: str = "auto",
 ):
     try:
         return read_pads(
@@ -211,6 +212,7 @@ def _run(
             overrides=overrides,
             visualize=visualize,
             expected_ids=expected_ids,
+            mode=mode,
         )
     except ValueError as exc:
         # 설정 오타나 잘못된 값은 요청 잘못이다.
@@ -282,6 +284,16 @@ async def read(
             examples=[""],
         ),
     ] = "",
+    mode: Annotated[
+        str,
+        Form(
+            description=(
+                "'auto'(기본) 면 패드 종류(무채색/유채색)를 판별해 유채색이면 "
+                "새 경로도 함께 낸다. 'legacy' 면 판별하지 않고 기존 무채색 "
+                "경로만 돈다."
+            )
+        ),
+    ] = "auto",
 ) -> ReadResponse:
     """사진을 올려 판독한다.
 
@@ -303,7 +315,7 @@ async def read(
     # OpenCV 연산이 GIL 을 오래 잡는 구간이 있어 이벤트 루프에서 직접 돌리지
     # 않는다.
     result = await run_in_threadpool(
-        _run, reading, baselines, tone, overrides, visualize
+        _run, reading, baselines, tone, overrides, visualize, None, mode
     )
     return to_response(
         result.to_dict(include_blobs=False),
@@ -341,6 +353,7 @@ async def read_path(request: Request, body: ReadPathRequest) -> ReadResponse:
         body.config or {},
         body.visualize,
         body.expected_point_ids,
+        body.mode,
     )
     return to_response(
         result.to_dict(include_blobs=False),
