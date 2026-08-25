@@ -117,6 +117,14 @@ class Reading(Base):
     read_point_id: Mapped[str | None] = mapped_column(Text)
     elapsed_ms: Mapped[float | None] = mapped_column(Float)
 
+    # 시험 지표: 광학밀도 기반 오염도. 판정에는 쓰지 않는다. 표시 전용.
+    od_sum: Mapped[float | None] = mapped_column(Float)
+    od_mean: Mapped[float | None] = mapped_column(Float)
+    od_score: Mapped[float | None] = mapped_column(Float)
+    roi_mean_reading: Mapped[float | None] = mapped_column(Float)
+    roi_mean_baseline: Mapped[float | None] = mapped_column(Float)
+    pad_scale: Mapped[float | None] = mapped_column(Float)
+
     response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     img_baseline_rectified: Mapped[str | None] = mapped_column(Text)
     img_rectified: Mapped[str | None] = mapped_column(Text)

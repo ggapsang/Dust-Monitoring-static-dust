@@ -170,6 +170,7 @@ def store_reading(
     baseline = pair_baseline(job.baselines, read_point)
     scores = pad.get("scores") or {}
     quality = pad.get("quality") or {}
+    od = pad.get("optical_density") or {}
 
     reading = Reading(
         run_id=run_id,
@@ -191,6 +192,12 @@ def store_reading(
         quality_pad_size_diff_ratio=quality.get("pad_size_diff_ratio"),
         read_point_id=pad.get("point_id_raw") or read_point,
         elapsed_ms=payload.get("elapsed_ms"),
+        od_sum=od.get("od_sum"),
+        od_mean=od.get("od_mean"),
+        od_score=od.get("od_score"),
+        roi_mean_reading=od.get("roi_mean_reading"),
+        roi_mean_baseline=od.get("roi_mean_baseline"),
+        pad_scale=od.get("pad_scale"),
         response=pad,
         created_at=datetime.now(timezone.utc),
     )

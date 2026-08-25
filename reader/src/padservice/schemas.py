@@ -94,6 +94,17 @@ class QualityModel(BaseModel):
     )
 
 
+class OpticalDensityModel(BaseModel):
+    """시험 지표. 광학밀도 기반 오염도 - 어떤 판정에도 쓰지 않는다. 표시 전용."""
+
+    od_sum: float | None = Field(default=None, description="노출 영역 전체의 log(기준/판독) 합. 임계값 없음")
+    od_mean: float | None = Field(default=None, description="od_sum / 노출 영역 픽셀 수")
+    od_score: float | None = Field(default=None, description="sqrt(od_mean), 음수면 0")
+    roi_mean_reading: float | None = Field(default=None, description="노출 영역의 판독 사진 평균 밝기(정규화)")
+    roi_mean_baseline: float | None = Field(default=None, description="노출 영역의 기준 사진 평균 밝기(정규화)")
+    pad_scale: float | None = Field(default=None, description="정합 시 원본 패드 크기 대비 확대 배율")
+
+
 class PadResult(BaseModel):
     """패드 하나의 판독 결과."""
 
@@ -119,6 +130,7 @@ class PadResult(BaseModel):
 
     scores: ScoresModel = ScoresModel()
     quality: QualityModel = QualityModel()
+    optical_density: OpticalDensityModel = OpticalDensityModel()
     excluded_px: dict[str, int] = Field(
         default={}, description="분진 판정에서 빠진 픽셀 수. 사유별"
     )
@@ -258,6 +270,7 @@ def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
     """패드 하나의 판독 결과를 응답 모델로."""
     scores = pad.get("scores") or {}
     quality = pad.get("quality") or {}
+    od = pad.get("optical_density") or {}
     return PadResult(
         success=pad["success"],
         summary=pad_summary(pad),
@@ -273,6 +286,14 @@ def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
             saturated_ratio=_r(quality.get("saturated_bright_ratio"), 4),
             pad_size_px=_r(quality.get("pad_size_px"), 1),
             pad_size_diff_ratio=_r(pad.get("pad_size_diff_ratio"), 4),
+        ),
+        optical_density=OpticalDensityModel(
+            od_sum=_r(od.get("od_sum"), 5),
+            od_mean=_r(od.get("od_mean"), 6),
+            od_score=_r(od.get("od_score"), 5),
+            roi_mean_reading=_r(od.get("roi_mean_reading"), 4),
+            roi_mean_baseline=_r(od.get("roi_mean_baseline"), 4),
+            pad_scale=_r(od.get("pad_scale"), 3),
         ),
         excluded_px=pad.get("excluded_px") or {},
         failure_reason=pad.get("failure_reason"),

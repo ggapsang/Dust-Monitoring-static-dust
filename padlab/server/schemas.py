@@ -175,6 +175,14 @@ class ReadingOut(BaseModel):
     read_point_id: str | None = None
     elapsed_ms: float | None = None
 
+    # 시험 지표. 판정에는 쓰지 않는다 - 표시 전용.
+    od_sum: float | None = None
+    od_mean: float | None = None
+    od_score: float | None = None
+    roi_mean_reading: float | None = None
+    roi_mean_baseline: float | None = None
+    pad_scale: float | None = None
+
     requested_at: datetime | None = Field(
         default=None, description="판독을 요청한(실행을 시작한) 일시"
     )

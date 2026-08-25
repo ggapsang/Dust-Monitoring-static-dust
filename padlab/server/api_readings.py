@@ -44,6 +44,7 @@ METRICS: dict[str, Any] = {
     "quality_pad_size_px": Reading.quality_pad_size_px,
     "quality_pad_size_diff_ratio": Reading.quality_pad_size_diff_ratio,
     "elapsed_ms": Reading.elapsed_ms,
+    "od_score": Reading.od_score,
 }
 """분포·시계열에서 고를 수 있는 지표. 응답에 실제로 실려 오는 것만 둔다."""
 
@@ -65,6 +66,12 @@ CSV_COLUMNS = [
     ("elapsed_ms", "처리시간ms"),
     ("run_kind", "실행구분"),
     ("has_override", "오버라이드"),
+    ("od_score", "od_score(시험)"),
+    ("od_sum", "od_sum(시험)"),
+    ("od_mean", "od_mean(시험)"),
+    ("roi_mean_reading", "roi_mean_reading(시험)"),
+    ("roi_mean_baseline", "roi_mean_baseline(시험)"),
+    ("pad_scale", "pad_scale(시험)"),
 ]
 
 
@@ -167,6 +174,12 @@ def _to_out(
         quality_pad_size_diff_ratio=reading.quality_pad_size_diff_ratio,
         read_point_id=reading.read_point_id,
         elapsed_ms=reading.elapsed_ms,
+        od_sum=reading.od_sum,
+        od_mean=reading.od_mean,
+        od_score=reading.od_score,
+        roi_mean_reading=reading.roi_mean_reading,
+        roi_mean_baseline=reading.roi_mean_baseline,
+        pad_scale=reading.pad_scale,
         requested_at=run.executed_at,
         run_kind=run.kind,
         has_override=bool(run.config_override),

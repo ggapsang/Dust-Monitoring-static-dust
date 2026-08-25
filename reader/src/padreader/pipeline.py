@@ -34,6 +34,7 @@ from .config import Config, PointIdConfig, load_config
 from .detect import Detection, detect_pads
 from .dust import DustMap, extract_dust
 from .normalize import normalize
+from .optical_density import compute_optical_density
 from .orient import apply_rotation, determine_orientation
 from .quality import check_gates, measure_quality
 from .rectify import rectify
@@ -57,6 +58,12 @@ class _Analysis:
     rotation_margin: float
     rectified: np.ndarray
     rectified_gray: np.ndarray
+    reflectance: np.ndarray
+    """조명 정규화된 상대 밝기(테두리=1). ``dust.local_depth`` 는 이미 국소
+    배경을 뺀 값이라 광학밀도 지표(시험)에는 못 쓴다 - 이건 그 전 단계다."""
+    normalization_scale: float | None
+    """이 사진의 테두리 밝기(raw 0-255 척도). ``reflectance = gray/이 값``.
+    광학밀도 지표의 8비트 양자화 하한을 reflectance 척도로 되돌리는 데 쓴다."""
     point_id: str | None
     point_id_status: Any
     point_id_confidence: float | None
@@ -165,6 +172,8 @@ def _analyze(
             rotation_margin=orientation.margin,
             rectified=rectified_bgr,
             rectified_gray=rectified_gray,
+            reflectance=normalization.reflectance,
+            normalization_scale=normalization.scale,
             point_id=target_value,
             point_id_status=target_status,
             point_id_confidence=target_confidence,
@@ -394,6 +403,21 @@ def _compare(
             **partial,
         )
 
+    # reflectance 는 정면 보정 이미지 전체(예: 1120x1120) 이고 measurable 은
+    # 여백만 잘라낸 크기다 - origin 과 measurable 의 모양으로 같은 자리를 자른다.
+    ox, oy = reading.dust.origin
+    mh, mw = measurable.shape
+    optical_density = compute_optical_density(
+        reading.reflectance[oy : oy + mh, ox : ox + mw],
+        base.reflectance[oy : oy + mh, ox : ox + mw],
+        reading.normalization_scale,
+        base.normalization_scale,
+        measurable,
+    )
+    optical_density.pad_scale = (
+        (cfg.pad_size_px / reading_size) if reading_size > 0 else None
+    )
+
     kept = blobs if cfg.dust.max_blobs is None else blobs[: cfg.dust.max_blobs]
     result = PadReadResult(
         success=True,
@@ -403,6 +427,7 @@ def _compare(
         measurable_px=int(measurable.sum()),
         excluded_px=reading.dust.excluded_pixels,
         pad_size_diff_ratio=size_diff,
+        optical_density=optical_density,
         **partial,
     )
 

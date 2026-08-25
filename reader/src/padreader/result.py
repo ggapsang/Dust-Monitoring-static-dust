@@ -179,6 +179,50 @@ class QualityMetrics:
 
 
 @dataclass
+class OpticalDensityScores:
+    """시험 지표. 광학밀도(−log 투과율) 기반 오염도 - 판정에는 쓰지 않는다.
+
+    임계값도, "가장 큰 덩어리 하나만" 도, 결합식도 없다. 노출 영역 전체 픽셀의
+    부호 있는 로그값을 그대로 더한다 - 노이즈는 부호가 섞여 있어 합산 과정에서
+    스스로 상쇄되고, 분진은 늘 한 방향(어두워짐)이라 상쇄되지 않고 쌓인다.
+
+    ``uniform``/``localized``/``combined`` 과 나란히 참고용으로만 낸다. 경보·
+    등급·임계 비교 어디에도 쓰지 않는다.
+    """
+
+    od_sum: float | None = None
+    """노출 영역 전체 픽셀의 log(기준/판독) 합. 부호 그대로, 임계값 없이."""
+
+    od_mean: float | None = None
+    """``od_sum / 노출 영역 픽셀 수``. 패드 전체가 이만큼 균일하게 어두워진
+    것과 같다는 등가 오염 깊이(면적 차원)."""
+
+    od_score: float | None = None
+    """``sqrt(od_mean)`` (음수면 0). 선형 차원으로 바꾼 값 - 오염을 한 덩어리로
+    모았을 때 그 한 변이 패드 폭의 몇 %인지에 해당한다."""
+
+    roi_mean_reading: float | None = None
+    """노출 영역의 판독 사진 평균 밝기(정규화 reflectance). od_score 가 튈 때
+    조명 때문인지 가리는 참고값."""
+
+    roi_mean_baseline: float | None = None
+    """노출 영역의 기준 사진 평균 밝기(정규화 reflectance)."""
+
+    pad_scale: float | None = None
+    """정합 시 원본 패드 크기 대비 확대 배율. 촬영 거리의 대리 지표."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "od_sum": _f(self.od_sum),
+            "od_mean": _f(self.od_mean),
+            "od_score": _f(self.od_score),
+            "roi_mean_reading": _f(self.roi_mean_reading),
+            "roi_mean_baseline": _f(self.roi_mean_baseline),
+            "pad_scale": _f(self.pad_scale),
+        }
+
+
+@dataclass
 class NormalizationInfo:
     """조명 정규화 진단값."""
 
@@ -220,6 +264,7 @@ class PadReadResult:
 
     quality: QualityMetrics = field(default_factory=QualityMetrics)
     normalization: NormalizationInfo = field(default_factory=NormalizationInfo)
+    optical_density: OpticalDensityScores = field(default_factory=OpticalDensityScores)
 
     point_id: str | None = None
     point_id_status: PointIdStatus = PointIdStatus.DISABLED
@@ -268,6 +313,7 @@ class PadReadResult:
             "excluded_px": dict(self.excluded_px),
             "quality": self.quality.to_dict(),
             "normalization": self.normalization.to_dict(),
+            "optical_density": self.optical_density.to_dict(),
             "point_id": self.point_id,
             "point_id_raw": self.point_id_raw,
             "point_id_status": self.point_id_status.value,

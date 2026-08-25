@@ -103,6 +103,7 @@ const COLUMNS = [
   { key: 'score_uniform', label: 'uniform', kind: 'num', digits: 3 },
   { key: 'score_localized', label: 'localized', kind: 'num', digits: 3 },
   { key: 'score_combined', label: 'total', kind: 'num', digits: 3, cls: 'key' },
+  { key: 'od_score', label: 'od_score (시험)', kind: 'num', digits: 3 },
   { key: 'quality_sharpness', label: '선명도', kind: 'num', digits: 4 },
   { key: 'quality_saturated_ratio', label: '포화', kind: 'num', digits: 4 },
   { key: 'quality_pad_size_px', label: '패드 크기', kind: 'num', digits: 1 },
