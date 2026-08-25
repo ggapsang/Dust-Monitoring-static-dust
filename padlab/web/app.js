@@ -14,6 +14,11 @@ const state = {
   readings: [],
   pointRows: [],
   selected: new Set(),
+  // 최근 실행 표에서 체크된 실행 id. 실행마다 별도 표라 결과 표의
+  // selected 와 같이 두면 서로 새어 든다.
+  runs: [],
+  selectedRuns: new Set(),
+  runsPoll: null,
   // 표마다 따로 갖는 열 필터·정렬. 엑셀처럼 열 이름을 눌러 정한다.
   // 결과 표와 개소 목록이 같은 틀을 쓰되 필터·정렬은 서로 독립이어야 한다 -
   // 안 그러면 결과 표에서 걸어 둔 조건이 개소 목록에도 그대로 걸려 버린다.
@@ -972,9 +977,39 @@ function watch(runId) {
   state.poll = setInterval(tick, 2000);
 }
 
+// 선택 재판독은 실행을 한꺼번에 여러 개 띄우므로 watch() 처럼 하나의 상태
+// 창에 몰아 쓸 수 없다. 대신 "최근 실행" 표 자체를 다시 그려 각 행에서
+// 진행 상황을 보게 하고, 전부 끝나면 결과 표까지 새로고침한다.
+function watchRuns(runIds) {
+  clearInterval(state.runsPoll);
+  const pending = new Set(runIds);
+  const tick = async () => {
+    await loadRuns();
+    state.runs.forEach((run) => { if (pending.has(run.id) && run.status !== 'running') pending.delete(run.id); });
+    if (pending.size === 0) {
+      clearInterval(state.runsPoll);
+      await loadReadings();
+    }
+  };
+  tick();
+  state.runsPoll = setInterval(tick, 2000);
+}
+
 async function loadRuns() {
-  const runs = await api('/api/runs?limit=20');
-  $('#t-runs tbody').innerHTML = runs.map((run) => `<tr>
+  state.runs = await api('/api/runs?limit=20');
+  // 다시 불러온 목록에 없는 실행은 체크가 남아 있어도 뜻이 없다.
+  const ids = new Set(state.runs.map((r) => r.id));
+  [...state.selectedRuns].forEach((id) => { if (!ids.has(id)) state.selectedRuns.delete(id); });
+  drawRuns();
+}
+
+// 실행 중인 실행은 그 실행에 딸린 판독 건이 아직 다 안 나왔을 수 있어
+// 재판독 대상에서 뺀다 - 체크박스 자체를 막는다.
+function drawRuns() {
+  $('#t-runs tbody').innerHTML = state.runs.map((run) => `<tr>
+    <td><input type="checkbox" data-run-select="${run.id}"
+      ${run.status === 'running' ? 'disabled' : ''}
+      ${state.selectedRuns.has(run.id) ? 'checked' : ''}></td>
     <td>${run.id}</td><td>${stamp(run.executed_at)}</td>
     <td>${run.kind === 'rerun'
       ? '<span class="badge info"><i class="dot"></i>재판독</span>'
@@ -987,6 +1022,20 @@ async function loadRuns() {
     <td class="num">${run.reading_count}</td>
     <td class="apart">${(run.notes || []).length}</td>
   </tr>`).join('');
+
+  $$('[data-run-select]', $('#t-runs tbody')).forEach((box) => box.addEventListener('change', () => {
+    const id = Number(box.dataset.runSelect);
+    box.checked ? state.selectedRuns.add(id) : state.selectedRuns.delete(id);
+    syncRunSelection();
+  }));
+  syncRunSelection();
+}
+
+function syncRunSelection() {
+  const selectable = state.runs.filter((r) => r.status !== 'running');
+  $('#rr-rerun').disabled = state.selectedRuns.size === 0;
+  $('#rr-count').textContent = state.selectedRuns.size ? `${state.selectedRuns.size}건 선택` : '';
+  $('#rr-all').checked = selectable.length > 0 && selectable.every((r) => state.selectedRuns.has(r.id));
 }
 
 // ── 기준 사진 이력 ──────────────────────────────────────────────────
@@ -1269,6 +1318,39 @@ function bind() {
   $('#r-files').addEventListener('change', () => pickFiles().catch((e) => toast(e.message, true)));
   $('#r-apply-all').addEventListener('click', applyToAll);
   $('#r-go').addEventListener('click', startRun);
+
+  $('#rr-all').addEventListener('change', () => {
+    const selectable = state.runs.filter((r) => r.status !== 'running');
+    if ($('#rr-all').checked) selectable.forEach((r) => state.selectedRuns.add(r.id));
+    else state.selectedRuns.clear();
+    drawRuns();
+  });
+  $('#rr-rerun').addEventListener('click', async () => {
+    const ids = [...state.selectedRuns];
+    if (!ids.length) return;
+    const override = prompt(
+      `선택한 실행 ${ids.length}건을 각각 같은 사진·같은 기준으로 다시 판독한다.\n적용할 설정 오버라이드 (JSON). 비우면 각 실행의 원래 설정 그대로.`,
+      '{}');
+    if (override === null) return;
+    let overrideValue;
+    try { overrideValue = JSON.parse(override || '{}'); } catch { toast('JSON 형식이 아니다', true); return; }
+
+    $('#rr-rerun').disabled = true;
+    const results = await Promise.allSettled(ids.map((id) => api(`/api/runs/${id}/rerun`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config_override: overrideValue }),
+    })));
+    const started = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+    const failed = results.filter((r) => r.status === 'rejected');
+
+    state.selectedRuns.clear();
+    await loadRuns();
+    if (started.length) toast(`재판독 ${started.length}건을 시작했다`);
+    if (failed.length) toast(`${failed.length}건은 시작하지 못했다: ${failed[0].reason?.message ?? failed[0].reason}`, true);
+
+    if (started.length) watchRuns(started.map((r) => r.id));
+  });
 
   $('#p-back').addEventListener('click', backToList);
   $('#p-csv-list').addEventListener('click', exportPointList);
