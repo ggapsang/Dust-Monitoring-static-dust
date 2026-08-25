@@ -15,7 +15,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-Tone = Literal["white", "black"]
+Tone = Literal["white", "black", "chroma"]
+"""무채색 패드는 분진 색과 반대인 바탕을 고른다(어두운 분진->white, 밝은
+분진->black). chroma 는 유채색(마젠타) 패드 - 판독기가 사진에서 자동
+판별하므로 이 값은 등록·표시용일 뿐이고, 실제 판독 호출은 white 와 같은
+판정 극성으로 나간다(``runs.py`` 의 ``_reader_tone``)."""
 
 
 class TargetIn(BaseModel):

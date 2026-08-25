@@ -74,6 +74,19 @@ def effective_baseline(
     return session.execute(stmt).scalars().first()
 
 
+def _reader_tone(point_tone: str) -> str:
+    """개소 등록 톤(white/black/chroma) 을 판독기 호출 톤(white/black) 으로.
+
+    판독기의 ``pad_tone`` 은 white/black 두 값만 받는다 - 무채색 패드의
+    검출 판정 극성이다. chroma(유채색) 패드는 테두리 잉크·바깥 여백
+    배치가 white 톤 무채색 패드와 완전히 같게 도안했으므로(``make_pad_chroma.py``),
+    호출 자체는 white 로 나간다. 패드가 실제로 유채색인지는 판독기가
+    사진에서 스스로 판별한다(``pad_type`` 필드) - 이 함수는 그 판별과
+    무관하게 API 호출값만 맞춰 준다.
+    """
+    return "white" if point_tone == "chroma" else point_tone
+
+
 def plan_jobs(
     session: Session, capture: Capture, ignore_window: bool = False
 ) -> tuple[list[Job], list[dict[str, Any]]]:
@@ -121,7 +134,7 @@ def plan_jobs(
                 }
             )
             continue
-        group = by_tone.setdefault(point.tone, ([], []))
+        group = by_tone.setdefault(_reader_tone(point.tone), ([], []))
         group[0].append(point)
         group[1].append(base)
 

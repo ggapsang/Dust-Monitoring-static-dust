@@ -1193,6 +1193,7 @@ async function loadRegistry() {
         <td><select data-f="tone">
           <option value="white" ${point.tone === 'white' ? 'selected' : ''}>white</option>
           <option value="black" ${point.tone === 'black' ? 'selected' : ''}>black</option>
+          <option value="chroma" ${point.tone === 'chroma' ? 'selected' : ''}>chroma</option>
         </select></td>
         <td><select data-f="target_id">${targetChoices(point.target_id)}</select></td>
         <td class="actcell"><span class="acts">

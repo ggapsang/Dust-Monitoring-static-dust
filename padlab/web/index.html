@@ -204,10 +204,14 @@
       <label class="field grow">명칭<input id="n-point-name"></label>
       <label class="field grow">물리적 위치<input id="n-point-loc"></label>
       <label class="field">패드 톤
-        <select id="n-point-tone"><option value="white">white</option><option value="black">black</option></select></label>
+        <select id="n-point-tone">
+          <option value="white">white</option>
+          <option value="black">black</option>
+          <option value="chroma">chroma (마젠타, 시험)</option>
+        </select></label>
       <button class="primary" id="n-point-go">추가</button>
     </div>
-    <p class="muted">톤은 개소마다 분진 색이 고정이라 여기서 정한다. 어두운 분진이면 white, 밝은 분진이면 black 이다.</p>
+    <p class="muted">무채색은 개소마다 분진 색이 고정이라 여기서 정한다 - 어두운 분진이면 white, 밝은 분진이면 black. chroma 는 유채색(마젠타) 패드 - 패드 종류는 판독기가 사진에서 자동 판별하며, 이 값은 등록·표시용이다.</p>
   </div>
   <div class="card">
     <h3>기준 사진 등록</h3>
