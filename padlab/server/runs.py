@@ -43,6 +43,7 @@ class Job:
 
     capture: Capture
     tone: str
+    mode: str
     points: list[Point]
     baselines: list[Baseline]
 
@@ -134,13 +135,21 @@ def plan_jobs(
                 }
             )
             continue
-        group = by_tone.setdefault(_reader_tone(point.tone), ([], []))
+        # 등록 톤(white/black/chroma) 으로 그룹을 나눈다 - chroma 는 판독기
+        # 호출 톤은 white 와 같아도, 검출 방식(mode)이 달라 따로 부른다.
+        group = by_tone.setdefault(point.tone, ([], []))
         group[0].append(point)
         group[1].append(base)
 
     jobs = [
-        Job(capture=capture, tone=tone, points=grouped[0], baselines=grouped[1])
-        for tone, grouped in sorted(by_tone.items())
+        Job(
+            capture=capture,
+            tone=_reader_tone(point_tone),
+            mode="chroma" if point_tone == "chroma" else "auto",
+            points=grouped[0],
+            baselines=grouped[1],
+        )
+        for point_tone, grouped in sorted(by_tone.items())
     ]
     return jobs, notes
 
@@ -287,6 +296,7 @@ async def process_capture(
         plans = [
             (
                 job.tone,
+                job.mode,
                 storage.absolute(root, capture.file_path).as_posix(),
                 [storage.absolute(root, b.file_path).as_posix() for b in job.baselines],
                 [b.id for b in job.baselines],
@@ -296,10 +306,10 @@ async def process_capture(
         ]
         session.commit()
 
-    for tone, image_path, baseline_paths, baseline_ids, point_ids in plans:
+    for tone, mode, image_path, baseline_paths, baseline_ids, point_ids in plans:
         try:
             outcome = await client.read_path(
-                image_path, baseline_paths, tone, overrides, point_ids
+                image_path, baseline_paths, tone, overrides, point_ids, mode
             )
         except Exception as exc:  # noqa: BLE001 - 사진 한 장의 실패로 다룬다
             _note(session_factory, run_id, capture_id, tone, "read_failed", str(exc)[:400])
@@ -312,6 +322,7 @@ async def process_capture(
             job = Job(
                 capture=capture,
                 tone=tone,
+                mode=mode,
                 points=[session.get(Point, pid) for pid in point_ids],
                 baselines=[session.get(Baseline, bid) for bid in baseline_ids],
             )

@@ -15,10 +15,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
+from .config import DetectConfig
+from .detect import Detection
+from .geometry import order_corners, quad_area
 from .result import ChromaFieldScore, FailureReason
-from .spec import PadSpec, V2_PROTECTED
+from .spec import PadSpec, Rect, V2_PROTECTED
 
 PAD_TYPE_SATURATION_THRESHOLD = 0.35
 """유채색/무채색 판별 기준. 정합 후 측정 여백의 (max-min)/max 중앙값.
@@ -59,6 +63,99 @@ def classify_pad_type(
     median_saturation = float(np.median(saturation))
     pad_type = "chroma" if median_saturation > threshold else "mono"
     return pad_type, median_saturation
+
+
+def detect_pads_chroma(
+    bgr: np.ndarray,
+    spec: PadSpec,
+    cfg: DetectConfig,
+    saturation_threshold: float = PAD_TYPE_SATURATION_THRESHOLD,
+) -> list[Detection]:
+    """유채색 패드를 색으로 직접 찾는다. 무채색 검출(``detect.py``)과 별개
+    경로다 - 그쪽은 건드리지 않는다.
+
+    무채색 검출은 "잉크 링 + 그 안의 밝은 구멍"을 밝기로 가른다. 유채색
+    패드가 어둡게 찍히면(마젠타가 잉크만큼 어두워지면) 그 밝기 대비가
+    사라져 링을 못 찾는다 - 실측 사례: 명도 13~33 인데 채도는 0.91.
+    채도는 밝기와 무관하게 남으므로, 측정면(고르게 채도가 높은 사각
+    덩어리)을 직접 찾는다.
+
+    측정면의 네 꼭짓점만 찾으면 패드 외곽은 역산으로 나온다 - 측정 여백이
+    패드 전체 좌표계에서 정확히 어느 정규화 사각형인지(``spec.margin``)는
+    이미 규격에 있고, 같은 평면이므로 사영변환도 하나다.
+    """
+    height, width = bgr.shape[:2]
+    b, g, r = bgr[..., 0].astype(np.float64), bgr[..., 1].astype(np.float64), bgr[..., 2].astype(np.float64)
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    saturation = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0.0)
+    mask = (saturation > saturation_threshold).astype(np.uint8) * 255
+
+    # 렌즈 색수차 등 가는 잡음을 지운다. 커널을 사진 짧은 변 대비 비율로
+    # 잡아 해상도에 무관하게 만든다 - detect.py 의 local_block_ratio 와
+    # 같은 방식.
+    k = max(3, int(round(min(height, width) * 0.01)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    total_area = float(height * width)
+    out: list[Detection] = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        ratio = area / total_area
+        if ratio < cfg.min_pad_area_ratio or ratio > cfg.max_pad_area_ratio:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, cfg.approx_epsilon_ratio * perimeter, True)
+        if len(approx) != 4 or not cv2.isContourConvex(approx):
+            continue
+        hull_area = cv2.contourArea(cv2.convexHull(approx))
+        if hull_area <= 0 or area / hull_area < cfg.min_solidity:
+            continue
+
+        margin_corners = order_corners(approx.reshape(4, 2).astype(np.float64))
+        pad_corners = _pad_corners_from_margin(margin_corners, spec.margin)
+        out.append(
+            Detection(
+                corners=pad_corners,
+                coarse_corners=pad_corners,
+                area=quad_area(pad_corners),
+                # 잉크 링 변 적합이 아니라 색 덩어리 컨투어에서 나온 것이라
+                # 그 진단값이 없다 - 뒤(회전 판정·품질 게이트)에서 어차피
+                # 다시 검증한다.
+                edge_sample_counts=(0, 0, 0, 0),
+                edge_residuals=(0.0, 0.0, 0.0, 0.0),
+            )
+        )
+
+    out.sort(key=lambda d: -d.area)
+    return out
+
+
+def _pad_corners_from_margin(margin_corners_photo: np.ndarray, margin_rect: Rect) -> np.ndarray:
+    """측정 여백의 사진 좌표 네 꼭짓점 -> 패드 외곽 네 꼭짓점.
+
+    측정 여백과 패드 외곽은 같은 평면 위의 두 사각형이라 사영변환이 하나로
+    통한다. 여백의 정규화 좌표(``margin_rect``)에서 사진 좌표로 가는 변환을
+    구하면, 그 변환을 패드 외곽의 정규화 좌표 (0,0)-(1,1) 에 그대로 적용해
+    외곽의 사진 좌표를 얻는다.
+    """
+    src = np.array(
+        [
+            [margin_rect.x0, margin_rect.y0],
+            [margin_rect.x1, margin_rect.y0],
+            [margin_rect.x1, margin_rect.y1],
+            [margin_rect.x0, margin_rect.y1],
+        ],
+        dtype=np.float32,
+    )
+    dst = margin_corners_photo.astype(np.float32)
+    transform = cv2.getPerspectiveTransform(src, dst)
+    pad_norm = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32).reshape(-1, 1, 2)
+    pad_photo = cv2.perspectiveTransform(pad_norm, transform).reshape(4, 2)
+    return pad_photo.astype(np.float64)
 
 
 @dataclass

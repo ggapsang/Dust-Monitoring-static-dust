@@ -55,6 +55,7 @@ class ReaderClient:
         tone: str,
         overrides: dict[str, Any] | None = None,
         expected_ids: list[str] | None = None,
+        mode: str = "auto",
     ) -> ReadOutcome:
         body = {
             "path": path,
@@ -65,6 +66,9 @@ class ReaderClient:
             # 이 사진에 있을 개소를 함께 보낸다. 숫자를 자유롭게 읽는 대신
             # 후보 안에서 배정하게 하면 없는 번호가 나오지 않는다.
             "expected_point_ids": expected_ids or None,
+            # "chroma" 면 무채색 잉크 링 검출을 아예 안 쓰고 색으로 직접
+            # 찾는다 - 유채색 개소만 모은 호출에 쓴다(_reader_tone 참고).
+            "mode": mode,
         }
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(f"{self._base}/read/path", json=body)

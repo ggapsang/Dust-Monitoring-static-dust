@@ -35,6 +35,7 @@ from .chroma import (
     channel_means,
     classify_pad_type,
     clipped_ratio,
+    detect_pads_chroma,
     field_score,
     luma_of,
     saturation_of,
@@ -129,8 +130,17 @@ def _analyze_all(
     찍혔을 때 하나 때문에 전부 버릴 이유가 없다.
     """
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    # mode="chroma" 는 무채색 검출(잉크 링 찾기)을 아예 안 쓴다 - 유채색
+    # 측정면이 어둡게 찍히면 잉크와 밝기로 안 갈려 링 자체가 안 잡히기
+    # 때문이다(실측: 명도 13인데 채도는 0.91). 색으로 직접 찾는
+    # detect_pads_chroma 를 쓴다. 무채색 경로(detect_pads)는 그대로 둔다.
+    detections = (
+        detect_pads_chroma(bgr, spec, cfg.detect, cfg.chroma.saturation_threshold)
+        if mode == "chroma"
+        else detect_pads(gray, tone, cfg.detect, spec.border_thickness)
+    )
     out: list[_Analysis] = []
-    for detection in detect_pads(gray, tone, cfg.detect, spec.border_thickness):
+    for detection in detections:
         found, _ = _analyze(bgr, gray, detection, tone, cfg, spec, mode)
         if found is not None:
             out.append(found)
@@ -173,7 +183,15 @@ def _analyze(
     chroma_reflectance: np.ndarray | None = None
     chroma_failure: FailureReason | None = None
     chroma_anchor_values: dict[str, Any] | None = None
-    if mode != "legacy":
+    if mode == "chroma":
+        # 색으로 직접 찾은 것이니 이미 유채색이라는 게 확정이다 - 다시
+        # 판별할 필요 없이 바로 채널 정규화로 간다.
+        pad_type = "chroma"
+        channel_norm, chroma_failure = channel_normalize(rectified_bgr, size)
+        if channel_norm is not None:
+            chroma_reflectance = channel_norm.reflectance
+            chroma_anchor_values = channel_norm.anchor_values
+    elif mode != "legacy":
         pad_type, _saturation = classify_pad_type(
             rectified_bgr, spec, size, cfg.chroma.saturation_threshold
         )
