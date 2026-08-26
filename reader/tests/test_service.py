@@ -22,7 +22,14 @@ from padservice.app import app  # noqa: E402
 
 SPEC_NAME = "v2_protected"
 SPEC = spec.SPECS[SPEC_NAME]
-BASE = CaptureParams(pad_fill=0.55, black_level=10, gain=0.95, noise_sigma=0.8, seed=5)
+BASE = CaptureParams(pad_fill=0.8, black_level=10, gain=0.95, noise_sigma=0.8, seed=5)
+"""서비스 검증용 합성 촬영 조건.
+
+``pad_fill`` 이 크다. 배포 설정(``config/default.yaml``)의
+``quality.min_pad_size_px`` 가 120 이라, 화면에서 패드가 작게 잡히는 조건으로
+합성하면 판독 정확도가 아니라 그 게이트를 재게 된다. 게이트 자체는
+``test_pipeline`` 이 따로 다룬다.
+"""
 
 
 @pytest.fixture(scope="module")
@@ -43,18 +50,35 @@ def baseline_bytes(tone: str, params: CaptureParams = BASE) -> bytes:
     return encoded(tone, vary(params, dust_coverage=0.0, clumps=()))
 
 
+def first_pad(body: dict) -> dict:
+    """응답에서 패드 하나를 꺼낸다.
+
+    예전 응답은 패드 한 장짜리 평평한 구조였는데, 한 화면에 패드가 여러 개
+    찍히는 일이 실제로 생겨 ``pads`` 배열로 바뀌었다. 스코어·품질·번호는 전부
+    그 안으로 내려갔다.
+    """
+    pads = body.get("pads") or []
+    assert pads, f"패드가 없다: {body.get('failure_detail') or body.get('summary')}"
+    return pads[0]
+
+
 def post_read(client, tone: str, params: CaptureParams = BASE, **kwargs):
     overrides = kwargs.pop("overrides", {})
     overrides.setdefault("spec", SPEC_NAME)
     baseline = kwargs.pop("baseline", None) or baseline_bytes(tone, params)
+    # tone·visualize 는 쿼리가 아니라 **폼 필드**다. 쿼리로 보내면 조용히
+    # 무시되고 기본값으로 돈다.
+    form = {"tone": tone, "config": json.dumps(overrides)}
+    if "visualize" in kwargs:
+        form["visualize"] = str(kwargs.pop("visualize")).lower()
     return client.post(
         "/read",
-        params={"tone": tone, **kwargs},
+        params=kwargs,
         files={
             "file": ("patrol.png", encoded(tone, params), "image/png"),
             "baseline": ("clean.png", baseline, "image/png"),
         },
-        data={"config": json.dumps(overrides)},
+        data=form,
     )
 
 
@@ -74,7 +98,8 @@ def test_config_exposes_values_and_source(client) -> None:
     body = client.get("/config").json()
     values = body["values"]
     assert values["service"]["port"] == 8911
-    assert "max_tilt_deg" in values["quality"]
+    assert "max_edge_rise_ratio" in values["quality"]
+    assert values["chroma"]["spec"] != values["spec"], "유채색 규격이 따로 있어야 한다"
     assert body["source"] is None or body["source"].endswith(".yaml")
 
 
@@ -94,10 +119,9 @@ def test_endpoints_are_only_what_was_agreed(client) -> None:
 def test_read_returns_score(client, tone: str) -> None:
     body = post_read(client, tone, vary(BASE, dust_coverage=0.2)).json()
     assert body["success"], body
-    assert body["dust_score"] == pytest.approx(0.2, abs=0.05)
-    assert body["pad_tone"] == tone
-    assert body["spec_name"] == SPEC_NAME
-    assert body["point_id"] == "1078"
+    pad = first_pad(body)
+    assert pad["scores"]["uniform"] == pytest.approx(0.2, abs=0.05)
+    assert pad["point_id"] == "1078"
 
 
 # ---------------------------------------------------------------------------
@@ -108,11 +132,15 @@ def test_read_returns_score(client, tone: str) -> None:
 def test_default_response_is_compact(client) -> None:
     """기본 응답에 무거운 것이 딸려오지 않아야 한다."""
     body = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()
-    for heavy in ("cells", "quality", "normalization", "line_contrasts", "corners"):
-        assert body[heavy] is None, heavy
+    pad = first_pad(body)
 
-    for key in ("success", "summary", "dust_score", "dispersion", "point_id", "elapsed_ms"):
-        assert body[key] is not None, key
+    # 유채색 진단값은 유채색 패드일 때만 실린다.
+    for chroma_only in ("chroma", "luma_dark", "luma_light", "chroma_diagnostics"):
+        assert pad[chroma_only] is None, chroma_only
+
+    for key in ("success", "summary", "scores", "point_id", "verification"):
+        assert pad[key] is not None, key
+    assert body["elapsed_ms"] is not None
 
 
 def test_response_stays_small_by_default(client) -> None:
@@ -126,9 +154,8 @@ def test_response_stays_small_by_default(client) -> None:
 def test_summary_reads_like_a_sentence(client) -> None:
     summary = post_read(client, "white", vary(BASE, dust_coverage=0.2)).json()["summary"]
     assert "판독 성공" in summary
-    assert "오염량 +0.19" in summary or "오염량 +0.20" in summary
-    assert "ID 1078" in summary
-    assert "ms" in summary
+    assert "combined" in summary and "uniform" in summary
+    assert "point_id 1078" in summary
 
 
 def test_summary_explains_failure(client) -> None:
@@ -153,20 +180,21 @@ def test_summary_explains_failure(client) -> None:
 
 def test_visualize_returns_image_links(client) -> None:
     """이미지는 주소로 준다. 본문에 base64 를 실으면 응답을 읽을 수 없다."""
-    plain = post_read(client, "white").json()
-    assert plain["images"] is None
+    off = first_pad(post_read(client, "white", visualize=False).json())
+    assert off["images"] is None, "끄면 이미지를 만들지 않는다"
 
     body = post_read(client, "white", visualize=True).json()
-    assert body["images"]["overlay"].endswith("/overlay.png")
-    assert body["images"]["rectified"].endswith("/rectified.png")
-    assert len(json.dumps(body)) < 1500, "주소 대신 이미지가 실려 온 것 아닌지"
+    pad = first_pad(body)
+    assert pad["images"]["distribution"].endswith("/distribution.png")
+    assert pad["images"]["rectified"].endswith("/rectified.png")
+    assert len(json.dumps(body)) < 2000, "주소 대신 이미지가 실려 온 것 아닌지"
 
 
 def test_image_links_actually_serve_png(client) -> None:
-    body = post_read(client, "white", visualize=True).json()
+    pad = first_pad(post_read(client, "white", visualize=True).json())
 
-    for kind in ("overlay", "rectified"):
-        response = client.get(body["images"][kind])
+    for kind in ("distribution", "rectified", "baseline_rectified"):
+        response = client.get(pad["images"][kind])
         assert response.status_code == 200, kind
         assert response.headers["content-type"] == "image/png"
 
@@ -176,13 +204,13 @@ def test_image_links_actually_serve_png(client) -> None:
 
 def test_image_link_is_stable_for_the_same_input(client) -> None:
     """같은 입력이면 같은 주소. 주소가 이미지 내용의 해시이기 때문이다."""
-    first = post_read(client, "white", visualize=True).json()
-    second = post_read(client, "white", visualize=True).json()
+    first = first_pad(post_read(client, "white", visualize=True).json())
+    second = first_pad(post_read(client, "white", visualize=True).json())
     assert first["images"] == second["images"]
 
 
 def test_unknown_image_token_is_404(client) -> None:
-    response = client.get("/images/deadbeefdeadbeef/overlay.png")
+    response = client.get("/images/deadbeefdeadbeef/distribution.png")
     assert response.status_code == 404
     assert "다시 판독" in response.json()["detail"]
 
@@ -199,8 +227,9 @@ def test_read_by_path_can_return_image_links(client, tmp_path) -> None:
             "config": {"spec": SPEC_NAME},
         },
     ).json()
-    assert body["images"]["overlay"].endswith("/overlay.png")
-    assert client.get(body["images"]["overlay"]).status_code == 200
+    pad = first_pad(body)
+    assert pad["images"]["distribution"].endswith("/distribution.png")
+    assert client.get(pad["images"]["distribution"]).status_code == 200
 
 
 def test_baseline_failure_is_reported(client) -> None:
@@ -212,23 +241,26 @@ def test_baseline_failure_is_reported(client) -> None:
     body = post_read(client, "white", baseline=buffer.tobytes()).json()
     assert body["success"] is False
     assert body["failure_reason"] == "baseline_unreadable"
-    assert "기준 사진을 판독하지 못함" in body["summary"]
+    assert "기준 이미지를 판독하지 못함" in body["summary"]
 
 
-def test_detail_flag_adds_diagnostics(client) -> None:
-    body = post_read(client, "white", detail=True).json()
-    assert body["quality"]["tilt_deg"] is not None
-    assert body["normalization"]["method"] == "two_point"
-    assert len(body["line_contrasts"]) == len(SPEC.line_bars)
-    assert len(body["corners"]) == 4
-    assert body["rotation_margin"] is not None
-    assert body["cells"] is None, "detail 은 구획까지 켜지 않는다"
+def test_diagnostics_ride_along_by_default(client) -> None:
+    """진단값이 늘 실려 오는지.
 
+    예전에는 ``detail``, ``include_cells`` 플래그로 켜고 껐는데, 켜야만 나오는
+    값은 사고가 난 뒤에 다시 판독해야 볼 수 있다는 문제가 있었다. 지금은 무거운
+    것(이미지, 구획별 값)만 빼고 진단값은 기본으로 싣는다.
 
-def test_include_cells_flag_adds_cells(client) -> None:
-    body = post_read(client, "white", include_cells=True).json()
-    assert len(body["cells"]) == 8 * 11
-    assert body["quality"] is None, "구획 요청이 진단값까지 켜지 않는다"
+    ``verification`` 은 검출한 사각형이 정말 규격대로였는지의 잔차다. 판정에
+    쓰지 않지만, 실려 있어야 나중에 기준을 바꿔 다시 걸러 볼 수 있다.
+    """
+    pad = first_pad(post_read(client, "white").json())
+
+    assert pad["quality"]["pad_size_px"] is not None
+    assert pad["quality"]["sharpness"] is not None
+    assert pad["optical_density"]["od_score"] is not None
+    assert pad["verification"]["border_fit_error"] is not None
+    assert pad["verification"]["point_id_agrees"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +281,9 @@ def test_blank_config_means_no_override(client, blank: str) -> None:
         data={"config": blank},
     )
     assert response.status_code == 200
-    assert response.json()["spec_name"] == "v2"
+    # 오버라이드가 없으면 서버 설정 그대로 돈다. 규격 이름은 응답에 없으므로
+    # /config 가 알려 주는 값과 견준다.
+    assert client.get("/config").json()["values"]["spec"] == "legacy"
 
 
 def test_config_form_field_defaults_to_blank(client) -> None:
@@ -280,7 +314,7 @@ def test_literal_placeholder_config_reports_what_it_got(client) -> None:
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert "'string'" in detail
-    assert "spec" in detail, "고칠 수 있게 예시가 함께 나와야 한다"
+    assert "dust" in detail, "고칠 수 있게 예시가 함께 나와야 한다"
 
 
 def test_bad_config_is_400(client) -> None:
@@ -292,12 +326,12 @@ def test_overrides_do_not_leak_between_requests(client) -> None:
     before = client.get("/config").json()
 
     changed = post_read(
-        client, "white", overrides={"spec": SPEC_NAME, "grid": {"rows": 3, "cols": 3}}
+        client, "white", overrides={"spec": SPEC_NAME, "dust": {"min_blob_px": 40}}
     ).json()
-    assert changed["grid_shape"] == [3, 3]
+    assert changed["success"], changed
 
     assert client.get("/config").json() == before
-    assert post_read(client, "white").json()["grid_shape"] == [8, 11]
+    assert client.get("/config").json()["values"]["dust"]["min_blob_px"] != 40
 
 
 # ---------------------------------------------------------------------------
@@ -315,8 +349,8 @@ def strip_timing(body: dict) -> dict:
 
 def test_repeated_requests_agree(client) -> None:
     params = vary(BASE, dust_coverage=0.15)
-    first = post_read(client, "white", params, include_cells=True, detail=True).json()
-    second = post_read(client, "white", params, include_cells=True, detail=True).json()
+    first = post_read(client, "white", params).json()
+    second = post_read(client, "white", params).json()
     assert strip_timing(first) == strip_timing(second)
 
 
@@ -372,7 +406,7 @@ def test_read_by_path_reports_missing_baseline(client, tmp_path) -> None:
         json={"path": reading, "baseline_path": str(tmp_path / "nope.png")},
     )
     assert response.status_code == 404
-    assert "기준 사진" in response.json()["detail"]
+    assert "기준 이미지" in response.json()["detail"]
 
 
 def test_both_read_endpoints_agree(client, tmp_path) -> None:
@@ -385,21 +419,20 @@ def test_both_read_endpoints_agree(client, tmp_path) -> None:
     params = vary(BASE, dust_coverage=0.2)
     reading, baseline = write_pair(tmp_path, params)
 
-    uploaded = post_read(client, "white", params, detail=True).json()
-    by_path = client.post(
+    uploaded = first_pad(post_read(client, "white", params).json())
+    by_path = first_pad(client.post(
         "/read/path",
         json={
             "path": reading,
             "baseline_path": baseline,
             "tone": "white",
-            "detail": True,
             "config": {"spec": SPEC_NAME},
         },
-    ).json()
+    ).json())
 
-    assert uploaded["spec_name"] == by_path["spec_name"] == SPEC_NAME
-    assert uploaded["normalization"]["method"] == by_path["normalization"]["method"]
-    assert uploaded["dust_score"] == pytest.approx(by_path["dust_score"], abs=1e-9)
+    assert uploaded["scores"] == by_path["scores"]
+    assert uploaded["quality"] == by_path["quality"]
+    assert uploaded["verification"] == by_path["verification"]
 
 
 def test_path_request_rejects_unknown_config_key(client, tmp_path) -> None:
@@ -409,7 +442,7 @@ def test_path_request_rejects_unknown_config_key(client, tmp_path) -> None:
         json={
             "path": reading,
             "baseline_path": baseline,
-            "config": {"grid": {"colz": 4}},
+            "config": {"dust": {"colz": 4}},
         },
     )
     assert response.status_code == 400

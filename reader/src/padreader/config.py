@@ -33,10 +33,10 @@ SOURCE_TREE_CONFIG = Path(__file__).resolve().parents[2] / "config" / "default.y
 @dataclass
 class DetectConfig:
     blur_ksize: int = 5
-    min_pad_area_ratio: float = 0.002
+    min_pad_area_ratio: float = 0.001
     """이미지 전체 면적 대비 패드 후보의 최소 면적비.
 
-    4080x3060 화면에서 0.002 는 패드 한 변 158px 이다. 면적은 1차 거름망일
+    4080x3060 화면에서 0.001 은 패드 한 변 112px 이다. 면적은 1차 거름망일
     뿐이고 뒤에 링 구조, 사각형, 채움도, 종횡비, 테두리 규격 검증이 남아
     있으므로 낮춰도 오검출로 이어지지 않는다. 반대로 높게 잡으면 멀리서 찍힌
     사진이 검출을 시작하기도 전에 잘린다.
@@ -115,7 +115,7 @@ class QualityConfig:
     min_tenengrad: float | None = None
     max_saturated_bright_ratio: float | None = None
     max_saturated_dark_ratio: float | None = None
-    min_pad_size_px: float | None = None
+    min_pad_size_px: float | None = 120
     max_pad_size_diff_ratio: float | None = None
     """기준 이미지와 판독 이미지의 패드 크기 차이 허용 비율.
 
@@ -265,7 +265,14 @@ class ServiceConfig:
 
 @dataclass
 class Config:
-    spec: str = "v2"
+    spec: str = "legacy"
+    """설정 파일을 못 찾았을 때 쓰는 값. **``config/default.yaml`` 과 같아야 한다.**
+
+    둘이 다르면 설정을 마운트하지 못한 배포에서 조용히 다른 규격으로 돈다 -
+    규격이 다르면 앵커도 측정면도 엉뚱한 자리를 재므로, 판독이 실패하는 게
+    아니라 틀린 값이 나온다. ``test_config`` 가 둘을 대조한다.
+    """
+
     pad_size_px: int = 1120
     pad_size_mm: float | None = None
     detect: DetectConfig = field(default_factory=DetectConfig)

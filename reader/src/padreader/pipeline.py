@@ -131,11 +131,16 @@ def load_image(image: Any) -> np.ndarray | None:
 
 def _analyze_all(
     bgr: np.ndarray, tone: str, cfg: Config, spec: PadSpec, mode: str = "auto"
-) -> list[_Analysis]:
+) -> tuple[list[_Analysis], list[tuple[FailureReason, str]]]:
     """사진에서 찾은 패드를 전부 분진 추출까지 처리한다.
 
     패드 하나가 품질 게이트에 걸려도 나머지는 계속 본다. 한 화면에 여러 개가
     찍혔을 때 하나 때문에 전부 버릴 이유가 없다.
+
+    **버려진 사유도 같이 돌려준다.** 게이트에 걸린 것과 애초에 사각형을 못
+    찾은 것은 다른 일인데, 사유를 버리면 밖에서는 둘 다 "패드를 못 찾았다" 로
+    보인다. 흐려서 걸렀는지 그 자리에 패드가 없었는지 알 수 없으면 무엇을
+    고쳐야 하는지도 알 수 없다.
     """
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     # 유채색 패드는 규격이 따로다. 현장에 붙은 유채색 도안의 좌표가 무채색
@@ -151,11 +156,14 @@ def _analyze_all(
         else detect_pads(gray, tone, cfg.detect, spec.border_thickness)
     )
     out: list[_Analysis] = []
+    rejected: list[tuple[FailureReason, str]] = []
     for detection in detections:
-        found, _ = _analyze(bgr, gray, detection, tone, cfg, spec, mode)
+        found, why = _analyze(bgr, gray, detection, tone, cfg, spec, mode)
         if found is not None:
             out.append(found)
-    return out
+        elif why is not None:
+            rejected.append(why)
+    return out, rejected
 
 
 def _analyze(
@@ -393,20 +401,33 @@ def read_pads(
             FailureReason.INVALID_IMAGE, "기준 이미지가 없다"))
 
     bases: list[_Analysis] = []
+    base_rejected: list[tuple[FailureReason, str]] = []
     for index, source in enumerate(sources):
         baseline_bgr = load_image(source)
         if baseline_bgr is None or baseline_bgr.size == 0:
             return finish(PadReadBatch.failed(
                 FailureReason.INVALID_IMAGE,
                 f"기준 이미지를 읽을 수 없다 ({index + 1}번째)"))
-        bases.extend(_analyze_all(baseline_bgr, pad_tone, cfg, spec, mode))
+        found, rejected = _analyze_all(baseline_bgr, pad_tone, cfg, spec, mode)
+        bases.extend(found)
+        base_rejected.extend(rejected)
 
     if not bases:
+        # 기준 쪽은 사유 이름을 BASELINE_UNREADABLE 로 유지한다. 판독 사진이
+        # 멀쩡해도 견줄 것이 없으면 판독이 성립하지 않는다는 사실이 먼저이고,
+        # 그것을 선명도 실패처럼 보이게 하면 엉뚱한 사진을 고치게 된다.
+        # 다만 무엇에 걸렸는지는 detail 로 함께 알린다.
         return finish(PadReadBatch.failed(
-            FailureReason.BASELINE_UNREADABLE, "기준 이미지에서 패드를 판독하지 못했다"))
+            FailureReason.BASELINE_UNREADABLE,
+            _why("기준 이미지에서 패드를 판독하지 못했다", base_rejected)))
 
-    readings = _analyze_all(reading_bgr, pad_tone, cfg, spec, mode)
+    readings, rejected = _analyze_all(reading_bgr, pad_tone, cfg, spec, mode)
     if not readings:
+        # 사각형을 못 찾은 것과 찾아 놓고 게이트에 걸린 것은 다른 일이다.
+        # 걸린 것이 있으면 그 사유를 그대로 낸다.
+        if rejected:
+            reason, detail = rejected[0]
+            return finish(PadReadBatch.failed(reason, detail))
         return finish(PadReadBatch.failed(
             FailureReason.PAD_NOT_FOUND, "판독 이미지에서 패드를 판독하지 못했다"))
 
@@ -421,6 +442,14 @@ def read_pads(
         for reading in readings
     ]
     return finish(PadReadBatch(success=any(p.success for p in pads), pads=pads))
+
+
+def _why(headline: str, rejected: list[tuple[FailureReason, str]]) -> str:
+    """버려진 사유를 한 줄에 덧붙인다. 없으면 머리말만."""
+    if not rejected:
+        return headline
+    reason, detail = rejected[0]
+    return f"{headline} ({reason.value}: {detail})"
 
 
 def _contrast(analysis: _Analysis) -> str:
