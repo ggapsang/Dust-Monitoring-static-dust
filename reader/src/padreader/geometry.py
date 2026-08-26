@@ -69,6 +69,20 @@ def quad_area(corners: np.ndarray) -> float:
     return float(0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
 
 
+def quads_overlap(corners_a: np.ndarray, area_a: float, corners_b: np.ndarray, area_b: float) -> bool:
+    """두 사각형이 사실상 같은 물체인지. 중심 거리가 작은 쪽 크기의 절반 안이면 같다.
+
+    검출 경로가 여럿이면(이진화 임계 여러 개, 무채색/유채색 검출 등) 같은
+    패드를 두 번 내놓을 수 있다. 목록에 담기 전에 걸러 낸다. 정밀한 IoU
+    대신 중심 거리를 쓰는 이유는 두 사각형이 같은 패드를 서로 다른 정밀도로
+    맞춘 결과라 변까지 정확히 겹치지는 않기 때문이다 - 중심이 가깝고 크기가
+    비슷하면 그걸로 충분하다.
+    """
+    ca, cb = corners_a.mean(axis=0), corners_b.mean(axis=0)
+    smaller = min(np.sqrt(area_a), np.sqrt(area_b))
+    return float(np.linalg.norm(ca - cb)) < smaller * 0.5
+
+
 def quad_corner_angles(corners: np.ndarray) -> np.ndarray:
     """네 내각(도)."""
     prev = np.roll(corners, 1, axis=0)

@@ -20,7 +20,7 @@ import numpy as np
 
 from .config import DetectConfig
 from .detect import Detection
-from .geometry import order_corners, quad_area
+from .geometry import order_corners, quad_area, quads_overlap
 from .result import ChromaFieldScore, FailureReason
 from .spec import PadSpec, Rect, V2_PROTECTED
 
@@ -39,6 +39,31 @@ PAD_TYPE_SATURATION_THRESHOLD = 0.35
 렌즈·JPEG 압축 영향 없음)으로만 확인했다. 실촬영이 확보되면 이 값을
 재검토해야 한다.
 """
+
+MAGENTA_HUE_DEG = 324.0
+"""프로세스 마젠타(RGB 236,0,140)의 색상각(HSV H, 도). 도안 원본에서 직접
+계산했다: max=R 이므로 H = 60*(((G-B)/Δ) mod 6) = 60*(((0-140)/236) mod 6)."""
+
+HUE_TOLERANCE_DEG = 40.0
+"""채도만으로 유채색 후보를 고르면 마젠타가 아닌 다른 색(주황 파티션,
+간판 등)까지 걸린다 - 실촬영에서 실제로 걸렸다(사무실 파티션의 채도 높은
+주황색 원단). 색상각까지 같이 보면 걸러진다. 여유폭은 카메라 화이트밸런스·
+조명 색온도가 색상각을 어느 정도 돌릴 수 있다는 점을 감안해 넉넉히 뒀다 -
+40도면 순수 주황(약 30도)과는 264도 이상 떨어져 있어 여전히 걸러진다."""
+
+
+def _mean_hue_deg(bgr_pixels: np.ndarray) -> float:
+    """화소 무리의 평균 색상각(도). 원형량이라 단순 평균이 아니라 벡터 평균을 쓴다."""
+    hsv = cv2.cvtColor(bgr_pixels.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_BGR2HSV)
+    hue_deg = hsv[..., 0].astype(np.float64).ravel() * 2.0  # OpenCV H 는 0-179 (실제 각의 절반)
+    radians = np.deg2rad(hue_deg)
+    mean_angle = math.atan2(float(np.sin(radians).mean()), float(np.cos(radians).mean()))
+    return math.degrees(mean_angle) % 360.0
+
+
+def _hue_distance_deg(a: float, b: float) -> float:
+    diff = abs(a - b) % 360.0
+    return min(diff, 360.0 - diff)
 
 
 def classify_pad_type(
@@ -101,23 +126,44 @@ def detect_pads_chroma(
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     total_area = float(height * width)
-    out: list[Detection] = []
+    candidates: list[Detection] = []
     for contour in contours:
         area = cv2.contourArea(contour)
         ratio = area / total_area
         if ratio < cfg.min_pad_area_ratio or ratio > cfg.max_pad_area_ratio:
             continue
-        perimeter = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, cfg.approx_epsilon_ratio * perimeter, True)
-        if len(approx) != 4 or not cv2.isContourConvex(approx):
-            continue
-        hull_area = cv2.contourArea(cv2.convexHull(approx))
-        if hull_area <= 0 or area / hull_area < cfg.min_solidity:
+
+        # approxPolyDP 로 "정확히 4점"을 요구하면 실촬영에서 자주 깨진다 -
+        # 인쇄 카드 모서리가 살짝 둥글거나 원근·JPEG 잡음이 꼭짓점을 하나 더
+        # 만들면(실측: 정오각형으로 잡힌 사례) 진짜 패드까지 통째로 버려진다.
+        # 최소외접사각형(minAreaRect)은 컨투어가 정확히 사각형이 아니어도
+        # "가장 잘 맞는 사각형"을 그대로 내놓으므로 이 문제가 없다. 진짜
+        # 사각형인지는 그 사각형 면적 대비 컨투어 면적(충전율)으로 따로 본다.
+        rect = cv2.minAreaRect(contour)
+        (rect_w, rect_h) = rect[1]
+        rect_area = float(rect_w) * float(rect_h)
+        # cfg.detect.min_solidity(기본 0.85)는 잉크 링 컨투어 기준이라 색
+        # 덩어리에는 너무 빡빡하다 - 실측 진짜 패드가 0.70 이었다(기울어져
+        # 찍히거나 반사로 한쪽이 깎이면 충전율이 자연히 낮아진다). 진짜와
+        # 가짜를 가르는 건 이 값이 아니라 아래 색상각이므로, 여기서는 순전한
+        # 잡음(가는 띠 등)만 거르는 낮은 바닥으로 둔다.
+        if rect_area <= 0 or area / rect_area < 0.5:
             continue
 
-        margin_corners = order_corners(approx.reshape(4, 2).astype(np.float64))
+        # 채도만으로는 마젠타 아닌 다른 유채색 물체(주황 파티션 등)도 걸린다.
+        # 이 컨투어 안 화소의 평균 색상각이 마젠타에서 너무 멀면 버린다.
+        fill = np.zeros((height, width), np.uint8)
+        cv2.drawContours(fill, [contour], -1, 255, thickness=cv2.FILLED)
+        region_pixels = bgr[fill > 0]
+        if region_pixels.size == 0:
+            continue
+        hue = _mean_hue_deg(region_pixels)
+        if _hue_distance_deg(hue, MAGENTA_HUE_DEG) > HUE_TOLERANCE_DEG:
+            continue
+
+        margin_corners = order_corners(cv2.boxPoints(rect).astype(np.float64))
         pad_corners = _pad_corners_from_margin(margin_corners, spec.margin)
-        out.append(
+        candidates.append(
             Detection(
                 corners=pad_corners,
                 coarse_corners=pad_corners,
@@ -130,7 +176,16 @@ def detect_pads_chroma(
             )
         )
 
-    out.sort(key=lambda d: -d.area)
+    # 같은 물체가 잡음 때문에 컨투어 두 개로 갈라지는 경우가 있다(가는 다리로
+    # 이어진 덩어리가 열림 연산에서 끊기는 등). 큰 것부터 채워 겹치면 버린다
+    # - detect.py 가 이진화 임계를 여럿 시도할 때 쓰는 것과 같은 판정
+    # (geometry.quads_overlap: 중심 거리가 작은 쪽 크기의 절반 안이면 같은
+    # 물체로 본다).
+    candidates.sort(key=lambda d: -d.area)
+    out: list[Detection] = []
+    for det in candidates:
+        if not any(quads_overlap(det.corners, det.area, o.corners, o.area) for o in out):
+            out.append(det)
     return out
 
 

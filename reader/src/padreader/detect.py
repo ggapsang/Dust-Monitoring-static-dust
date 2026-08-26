@@ -32,7 +32,7 @@ import cv2
 import numpy as np
 
 from .config import DetectConfig
-from .geometry import intersect_lines, line_from_points, order_corners, quad_area
+from .geometry import intersect_lines, line_from_points, order_corners, quad_area, quads_overlap
 from .profile import (
     crossing_offsets,
     edge_samples,
@@ -359,7 +359,7 @@ def detect_pads(
 
     def collect(binary: np.ndarray) -> None:
         for det in _detect_in(gray, binary, tone, cfg, border_thickness):
-            if not any(_overlaps(det, other) for other in found):
+            if not any(quads_overlap(det.corners, det.area, o.corners, o.area) for o in found):
                 found.append(det)
 
     for scale in cfg.threshold_scales or [1.0]:
@@ -381,17 +381,6 @@ def detect_pad(
     return found[0] if found else None
 
 
-def _overlaps(a: Detection, b: Detection) -> bool:
-    """두 검출이 사실상 같은 패드인지. 중심 거리가 작은 쪽 크기의 절반 안이면 같다.
-
-    바깥 테두리로 맞춘 것과 안쪽에서 되짚은 것이 같은 패드를 두 번 내놓을 수
-    있어, 목록에 담기 전에 걸러 낸다.
-    """
-    ca, cb = a.corners.mean(axis=0), b.corners.mean(axis=0)
-    smaller = min(np.sqrt(a.area), np.sqrt(b.area))
-    return float(np.linalg.norm(ca - cb)) < smaller * 0.5
-
-
 def _detect_in(
     gray: np.ndarray,
     binary: np.ndarray,
@@ -407,7 +396,7 @@ def _detect_in(
     out: list[Detection] = []
 
     def keep(det: Detection) -> None:
-        if not any(_overlaps(det, other) for other in out):
+        if not any(quads_overlap(det.corners, det.area, o.corners, o.area) for o in out):
             out.append(det)
 
     for quad, hole in _candidate_quads(binary, cfg):
