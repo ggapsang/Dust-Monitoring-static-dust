@@ -144,6 +144,37 @@ class ChromaDiagnosticsModel(BaseModel):
     )
 
 
+class VerificationModel(BaseModel):
+    """검출한 사각형이 정말 규격대로의 패드인지 재 본 잔차. 판정에 쓰지 않는다.
+
+    임계를 비운 채로 현장 사진을 쌓고 분포를 본 뒤에 선을 넣는다. 판독기가
+    버린 사진은 되살릴 수 없지만, 잔차를 달고 넘긴 사진은 재평가할 수 있다.
+    """
+
+    border_fit_error: float | None = Field(
+        default=None,
+        description=(
+            "잉크 띠 두께가 규격에서 벗어난 정도. 패드 한 변 대비 비율, 네 변 중 "
+            "최악. 크면 사각형이 패드 경계가 아니라 그림자나 이음새를 물었다는 뜻"
+        ),
+    )
+    anchor_contrast: float | None = Field(
+        default=None,
+        description=(
+            "유채색 정규화의 분모 '흰 앵커 - 검은 앵커' 의 채널 평균(raw 0-255). "
+            "음수면 앵커 자리를 흑백 반대로 짚고 있고, 0 근처면 두 자리가 같은 "
+            "것을 재고 있다. 무채색 패드는 null"
+        ),
+    )
+    point_id_agrees: bool | None = Field(
+        default=None,
+        description=(
+            "번호를 자유롭게 읽은 값이 배정된 개소 번호와 같은가. 어긋나면 그 "
+            "배정이 밀어붙인 것일 수 있다는 표시다"
+        ),
+    )
+
+
 class PadResult(BaseModel):
     """패드 하나의 판독 결과."""
 
@@ -188,6 +219,10 @@ class PadResult(BaseModel):
     )
     chroma_diagnostics: ChromaDiagnosticsModel | None = Field(
         default=None, description="유채색 진단값. 무채색이면 null"
+    )
+    verification: VerificationModel = Field(
+        default_factory=VerificationModel,
+        description="검출 결과를 규격에 대고 다시 잰 잔차. 실패한 판독에도 실린다",
     )
 
     excluded_px: dict[str, int] = Field(
@@ -344,6 +379,7 @@ def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
     pad_type = pad.get("pad_type")
     chroma_norm = pad.get("chroma_normalization") or {}
     diag = pad.get("chroma_diagnostics") or {}
+    verify = pad.get("verification") or {}
     return PadResult(
         success=pad["success"],
         summary=pad_summary(pad),
@@ -390,6 +426,11 @@ def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
             )
             if pad_type == "chroma"
             else None
+        ),
+        verification=VerificationModel(
+            border_fit_error=_r(verify.get("border_fit_error"), 5),
+            anchor_contrast=_r(verify.get("anchor_contrast"), 2),
+            point_id_agrees=verify.get("point_id_agrees"),
         ),
         excluded_px=pad.get("excluded_px") or {},
         failure_reason=pad.get("failure_reason"),

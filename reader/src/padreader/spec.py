@@ -362,10 +362,112 @@ V2_PROTECTED = replace(V2, name="v2_protected", anchors_protected=True)
 반드시 맞춰야 한다.
 """
 
+# --------------------------------------------------------------------------
+# v3 — 실제로 인쇄해 현장에 붙인 도안
+# --------------------------------------------------------------------------
+#
+# 위의 legacy/v2 는 이 저장소의 생성기(``padtools/generate_pad.py``)가 그리는
+# 도안이다. 현장에 붙은 패드는 그것이 아니라 ``assets/make_pad_dual_tones.py``
+# 와 그 유채색 변종 ``assets/make_pad_chroma.py`` 가 그린 것이고, 두 계보의
+# 좌표가 서로 다르다. 판독기가 v2 좌표로 실물을 재고 있었다.
+#
+# 실물 도안 세 장(백/흑/마젠타)을 픽셀 스캔해 확인한 사실:
+#
+# - 기하는 세 장이 완전히 동일하다. 다른 것은 측정면 색뿐이다.
+# - 앵커는 **바깥이 인쇄색, 안쪽이 바탕색**이다. v2 는 정반대로(바깥이 백,
+#   안쪽이 흑) 알고 있어, 유채색 정규화의 분모 ``흰앵커 - 검은앵커`` 가
+#   음수가 되어 판독이 전부 실패했다.
+# - 측정면은 y 0.1750..0.8036 이다. v2 의 margin_raw 는 y0 이 0.1536 이라
+#   위쪽 2% 가 측정면 밖 흰 바탕을 문다.
+#
+# 아래 값은 ``make_pad_chroma.py`` 의 상수를 그대로 옮긴 것이고,
+# ``tests/test_spec.py`` 가 실제 PNG 를 다시 스캔해 어긋나면 잡는다.
+
+V3_BORDER = 0.0589
+V3_BLOCK = 0.0643
+V3_BLOCK_OFFSET = 0.0786
+V3_POINT_ID_BOX = Rect(0.3491, 0.0643, 0.6563, 0.1527)
+V3_MARGIN_RAW = Rect(0.0589, 0.1750, 0.9411, 0.8036)
+V3_LINE_X0, V3_LINE_X1 = 0.2589, 0.8400
+
+_V3_LINE_Y0 = 0.8036
+_V3_LINE_GAP = 0.0196
+_V3_LINE_WIDTHS = (0.0027, 0.0063, 0.0134, 0.0286)
+
+
+def _v3_line_bars() -> tuple[LineBar, ...]:
+    """선군 4단. 첫 단이 측정면 바로 아래에서 시작해 간격을 두고 이어진다."""
+    bars: list[LineBar] = []
+    y = _V3_LINE_Y0
+    for width in _V3_LINE_WIDTHS:
+        bars.append(LineBar(y0=y, thickness=width))
+        y += width + _V3_LINE_GAP
+    return tuple(bars)
+
+
+_V3_ANCHOR = 0.0600
+_V3_ANCHOR_Y = 0.0786
+
+
+def _v3_anchor(x0: float) -> Rect:
+    return Rect(x0, _V3_ANCHOR_Y, x0 + _V3_ANCHOR, _V3_ANCHOR_Y + _V3_ANCHOR)
+
+
+V3_ANCHOR_INK: tuple[Rect, ...] = (_v3_anchor(0.1731), _v3_anchor(0.7723))
+"""인쇄색으로 찍힌 앵커. 좌우 쌍의 **바깥쪽**이다."""
+
+V3_ANCHOR_BASE: tuple[Rect, ...] = (_v3_anchor(0.2451), _v3_anchor(0.7003))
+"""바탕색으로 남겨 둔 앵커. 좌우 쌍의 **안쪽**이다."""
+
+_V3 = PadSpec(
+    name="_v3",
+    border_thickness=V3_BORDER,
+    corner_block_size=V3_BLOCK,
+    corner_block_offset=V3_BLOCK_OFFSET,
+    point_id_box=V3_POINT_ID_BOX,
+    line_group_x0=V3_LINE_X0,
+    line_group_x1=V3_LINE_X1,
+    line_bars=_v3_line_bars(),
+    margin_raw=V3_MARGIN_RAW,
+    anchors_protected=True,
+)
+
+V3 = replace(
+    _V3,
+    name="v3",
+    anchor_white=V3_ANCHOR_BASE,
+    anchor_black=V3_ANCHOR_INK,
+)
+"""백색 바탕 실물 도안. **유채색(마젠타) 패드도 이것을 쓴다.**
+
+``anchor_white``/``anchor_black`` 은 자리의 역할이 아니라 **거기가 실제로
+밝은가 어두운가**를 뜻한다(``render.py`` 가 각각 255, 0 으로 그린다). 백색
+바탕 패드는 인쇄색이 검정이므로 바깥(인쇄색)이 검은 앵커, 안쪽(바탕색)이
+흰 앵커다.
+
+마젠타 패드는 측정면만 유채색이고 앵커가 놓인 위쪽 밴드는 백색 바탕에 검은
+인쇄라, 앵커 관점에서는 백색 패드와 완전히 같다.
+"""
+
+V3_BLACK = replace(
+    _V3,
+    name="v3_black",
+    anchor_white=V3_ANCHOR_INK,
+    anchor_black=V3_ANCHOR_BASE,
+)
+"""흑색 바탕 실물 도안. 기하는 ``V3`` 와 같고 앵커의 명암만 뒤집힌다.
+
+흑색 바탕은 인쇄색이 흰색이므로 바깥(인쇄색)이 흰 앵커, 안쪽(바탕색)이
+검은 앵커다. 같은 자리를 가리키면서 이름만 맞바꾼 것이며, 이 구분을 두지
+않으면 흑색 패드에서 정규화 분모의 부호가 뒤집힌다.
+"""
+
 SPECS: dict[str, PadSpec] = {
     LEGACY.name: LEGACY,
     V2.name: V2,
     V2_PROTECTED.name: V2_PROTECTED,
+    V3.name: V3,
+    V3_BLACK.name: V3_BLACK,
 }
 
 

@@ -20,9 +20,9 @@ import numpy as np
 
 from .config import DetectConfig
 from .detect import Detection
-from .geometry import order_corners, quad_area, quads_overlap
+from .geometry import order_corners, quad_area, quad_side_lengths, quads_overlap
 from .result import ChromaFieldScore, FailureReason
-from .spec import PadSpec, Rect, V2_PROTECTED
+from .spec import PadSpec, Rect
 
 PAD_TYPE_SATURATION_THRESHOLD = 0.35
 """유채색/무채색 판별 기준. 정합 후 측정 여백의 (max-min)/max 중앙값.
@@ -38,6 +38,15 @@ PAD_TYPE_SATURATION_THRESHOLD = 0.35
 찍은 마젠타 패드 사진이 아직 없어 도안 원본(인쇄값 그대로, 카메라 노출·
 렌즈·JPEG 압축 영향 없음)으로만 확인했다. 실촬영이 확보되면 이 값을
 재검토해야 한다.
+"""
+
+DETECT_SATURATION_THRESHOLD = 0.35
+"""색으로 패드를 찾을 때(``detect_pads_chroma``) 후보 마스크의 채도 하한.
+
+위 판별 기준과 **같은 값에서 출발하지만 다른 상수다.** 둘을 한 값으로 묶으면
+한쪽을 손볼 수 없다 - 검출은 후보를 넉넉히 내는 쪽이 유리해 내리고 싶고,
+판별은 무채색 실촬영 최댓값(0.184)보다 확실히 위에 있어야 해서 내릴 수 없다.
+묶어 두고 0.15 로 내리면 진짜 무채색 패드가 유채색으로 판별된다.
 """
 
 MAGENTA_HUE_DEG = 324.0
@@ -94,7 +103,7 @@ def detect_pads_chroma(
     bgr: np.ndarray,
     spec: PadSpec,
     cfg: DetectConfig,
-    saturation_threshold: float = PAD_TYPE_SATURATION_THRESHOLD,
+    saturation_threshold: float = DETECT_SATURATION_THRESHOLD,
 ) -> list[Detection]:
     """유채색 패드를 색으로 직접 찾는다. 무채색 검출(``detect.py``)과 별개
     경로다 - 그쪽은 건드리지 않는다.
@@ -133,21 +142,16 @@ def detect_pads_chroma(
         if ratio < cfg.min_pad_area_ratio or ratio > cfg.max_pad_area_ratio:
             continue
 
-        # approxPolyDP 로 "정확히 4점"을 요구하면 실촬영에서 자주 깨진다 -
-        # 인쇄 카드 모서리가 살짝 둥글거나 원근·JPEG 잡음이 꼭짓점을 하나 더
-        # 만들면(실측: 정오각형으로 잡힌 사례) 진짜 패드까지 통째로 버려진다.
-        # 최소외접사각형(minAreaRect)은 컨투어가 정확히 사각형이 아니어도
-        # "가장 잘 맞는 사각형"을 그대로 내놓으므로 이 문제가 없다. 진짜
-        # 사각형인지는 그 사각형 면적 대비 컨투어 면적(충전율)으로 따로 본다.
-        rect = cv2.minAreaRect(contour)
-        (rect_w, rect_h) = rect[1]
-        rect_area = float(rect_w) * float(rect_h)
+        quad = _fit_quad(contour)
+        if quad is None:
+            continue
+        quad_a = quad_area(quad)
         # cfg.detect.min_solidity(기본 0.85)는 잉크 링 컨투어 기준이라 색
         # 덩어리에는 너무 빡빡하다 - 실측 진짜 패드가 0.70 이었다(기울어져
         # 찍히거나 반사로 한쪽이 깎이면 충전율이 자연히 낮아진다). 진짜와
         # 가짜를 가르는 건 이 값이 아니라 아래 색상각이므로, 여기서는 순전한
         # 잡음(가는 띠 등)만 거르는 낮은 바닥으로 둔다.
-        if rect_area <= 0 or area / rect_area < 0.5:
+        if quad_a <= 0 or area / quad_a < 0.5:
             continue
 
         # 채도만으로는 마젠타 아닌 다른 유채색 물체(주황 파티션 등)도 걸린다.
@@ -161,8 +165,13 @@ def detect_pads_chroma(
         if _hue_distance_deg(hue, MAGENTA_HUE_DEG) > HUE_TOLERANCE_DEG:
             continue
 
-        margin_corners = order_corners(cv2.boxPoints(rect).astype(np.float64))
-        pad_corners = _pad_corners_from_margin(margin_corners, spec.margin)
+        # 역산의 기준은 ``spec.margin`` 이 아니라 ``spec.margin_raw`` 다.
+        # 눈에 보이는 유채색 덩어리는 인쇄된 측정면 전체이고, ``spec.margin``
+        # 은 거기서 판독 여유(margin_inset)만큼 안으로 물러난 사각형이라
+        # 서로 다른 물건이다. 물러난 쪽으로 역산하면 패드 외곽이 그 비율만큼
+        # 부풀어 앵커 자리가 통째로 밀린다.
+        margin_corners = _align_to_margin(order_corners(quad), spec.margin_raw)
+        pad_corners = _pad_corners_from_margin(margin_corners, spec.margin_raw)
         candidates.append(
             Detection(
                 corners=pad_corners,
@@ -187,6 +196,72 @@ def detect_pads_chroma(
         if not any(quads_overlap(det.corners, det.area, o.corners, o.area) for o in out):
             out.append(det)
     return out
+
+
+_APPROX_RATIOS = (0.01, 0.015, 0.02, 0.03, 0.045, 0.06, 0.08)
+"""사각형 근사에 시도할 오차 허용치(둘레 대비). 촘촘한 것부터 본다."""
+
+
+def _fit_quad(contour: np.ndarray) -> np.ndarray | None:
+    """색 덩어리 윤곽에 볼록 사각형을 맞춘다. 못 맞추면 ``None``.
+
+    **``cv2.minAreaRect`` 를 쓰면 안 된다.** 그것이 낼 수 있는 것은 회전된
+    직사각형뿐인데, 비스듬히 찍힌 사각형은 원근 때문에 사다리꼴이다. 사다리꼴에
+    직사각형을 맞추면 꼭짓점이 틀어지고, 그 꼭짓점으로 정면 보정을 하면 원근이
+    펴지지 않은 채 평행사변형으로 남는다 - 실촬영에서 실제로 그렇게 나왔다.
+    측정면이 안 펴지면 그 위에서 역산한 패드 외곽도, 앵커 자리도 전부 밀린다.
+
+    ``approxPolyDP`` 로 "정확히 4점" 을 한 번만 요구하는 것도 안 된다. 인쇄
+    카드 모서리가 살짝 둥글거나 JPEG 잡음이 꼭짓점을 하나 더 만들면(실측:
+    오각형으로 잡힌 사례) 진짜 패드가 통째로 버려진다.
+
+    그래서 두 가지를 같이 쓴다 - 먼저 **볼록 껍질**을 씌워 오목한 잡음을
+    없애고(색 덩어리가 한쪽이 깎여 들어가도 사각형 판정이 흔들리지 않는다),
+    그 위에서 오차 허용치를 촘촘한 것부터 늘려 가며 4점이 나오는 첫 값을
+    쓴다. 사다리꼴 그대로를 살리면서 잡음에는 관대해진다.
+    """
+    hull = cv2.convexHull(contour)
+    peri = cv2.arcLength(hull, True)
+    if peri <= 0:
+        return None
+    for ratio in _APPROX_RATIOS:
+        approx = cv2.approxPolyDP(hull, ratio * peri, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            return approx.reshape(4, 2).astype(np.float64)
+    return None
+
+
+def _align_to_margin(quad: np.ndarray, margin_rect: Rect) -> np.ndarray:
+    """검출한 사각형의 꼭짓점 순서를 측정면 규격의 가로·세로에 맞춘다.
+
+    ``order_corners`` 가 주는 것은 **사진 좌표계의** 좌상단부터다. 그런데 패드가
+    사진 안에서 90도 돌아가 있으면 사진의 좌상단 꼭짓점은 측정면 규격의
+    좌상단이 아니다. 측정면은 정사각형이 아니라(가로:세로 = 0.8822:0.6286 =
+    1.40) 이 어긋남이 그대로 역산에 들어가면 좌표계가 파괴된다 - 실촬영에서
+    역산된 패드 외곽의 네 변이 [317, 214, 111, 595] 로 나왔다. 정사각형이어야
+    할 것이 5:1 이 된 것이다.
+
+    돌아간 것은 흔한 일이다. ``cv2.imread`` 는 EXIF 회전을 반영하지 않으므로,
+    가로로 든 카메라로 찍어도 원시 배열은 세로다.
+
+    가로세로 어느 쪽이 규격의 가로인지는 **비율로 정해진다.** 한 칸 돌린 쪽이
+    규격 종횡비에 더 가까우면 그쪽을 쓴다. 로그로 견주는 이유는 2배 늘어난
+    것과 절반으로 준 것을 같은 크기의 어긋남으로 보기 위해서다.
+
+    180도 어긋남은 여기서 풀지 않는다. 사각형을 반 바퀴 돌려도 종횡비가 같아
+    이 방법으로는 가릴 수 없고, 뒤따르는 회전 판정(``orient.py``)이 모서리
+    블록을 보고 바로잡는 몫이다.
+    """
+    sides = quad_side_lengths(quad)
+    horizontal = (sides[0] + sides[2]) / 2.0
+    vertical = (sides[1] + sides[3]) / 2.0
+    if horizontal <= 0 or vertical <= 0:
+        return quad
+    want = margin_rect.width / margin_rect.height
+    got = horizontal / vertical
+    if abs(math.log(got / want)) > abs(math.log(1.0 / (got * want))):
+        return np.roll(quad, -1, axis=0)
+    return quad
 
 
 def _pad_corners_from_margin(margin_corners_photo: np.ndarray, margin_rect: Rect) -> np.ndarray:
@@ -215,23 +290,37 @@ def _pad_corners_from_margin(margin_corners_photo: np.ndarray, margin_rect: Rect
 
 @dataclass
 class ChannelNormalization:
-    reflectance: np.ndarray
+    reflectance: np.ndarray | None
     """채널별(B,G,R) 정규화 반사율. 정합 이미지 전체 크기, float64.
-    흑색 앵커=0, 백색 앵커=1 이 되도록 선형 사상했다."""
+    흑색 앵커=0, 백색 앵커=1 이 되도록 선형 사상했다. 실패했으면 ``None``."""
 
     anchor_values: dict[str, list[float]]
-    """{"white": [B,G,R], "black": [B,G,R]} - 두 앵커 패치의 raw 관측값(중앙값)."""
+    """{"white": [R,G,B], "black": [R,G,B]} - 두 앵커 패치의 raw 관측값(중앙값)."""
+
+    anchor_contrast: float
+    """``흰 앵커 - 검은 앵커`` 의 채널 평균(raw 0-255 척도). 정규화의 분모다.
+
+    **실패해도 낸다.** 값이 음수면 앵커 자리를 흑백 반대로 짚고 있다는 뜻이고,
+    0 에 가까우면 두 자리가 같은 것을 재고 있다는 뜻이다 - 어느 쪽이든 좌표가
+    실물 도안과 어긋났다는 신호라, 사유 이름만으로는 알 수 없는 것을 알려
+    준다. 실제로 이 값이 없어서 좌표 오류를 노출 문제로 오진했다.
+    """
+
+    failure: FailureReason | None
 
 
 def channel_normalize(
-    rectified_bgr: np.ndarray, pad_size_px: int
-) -> tuple[ChannelNormalization | None, FailureReason | None]:
+    rectified_bgr: np.ndarray, pad_size_px: int, spec: PadSpec
+) -> ChannelNormalization:
     """2톤 앵커로 R·G·B 를 채널마다 ``(값-흑) / (백-흑)`` 정규화.
 
-    앵커 좌표는 ``V2_PROTECTED`` 규격의 것을 그대로 쓴다 - 어떤 흑백 규격이
-    설정돼 있든(``cfg.spec``), 유채색 패드의 물리적 앵커 위치는 그 도안
-    (``make_pad_chroma.py``) 이 2톤 앵커 도안과 동일한 좌표로 찍은 고정값이라
-    설정과 무관하다.
+    앵커 좌표는 넘겨받은 ``spec`` 의 것을 쓴다. 예전에는 ``V2_PROTECTED`` 를
+    코드에 박아 두었는데, 그 규격은 이 저장소의 생성기가 그리는 도안이지
+    현장에 붙은 실물 도안이 아니었다. 실물은 앵커 흑백이 반대라 분모가 음수가
+    되어 유채색 판독이 전부 실패했다. 규격은 인자로 받는다.
+
+    **실패해도 앵커 실측값과 대비는 채워서 돌려준다.** 판정만 돌려주면 왜
+    실패했는지 밖에서 알 방법이 없다.
     """
     height, width = rectified_bgr.shape[:2]
 
@@ -244,26 +333,40 @@ def channel_normalize(
             pixels.append(patch.reshape(-1, 3))
         return np.concatenate(pixels, axis=0)
 
-    white_px = sample(V2_PROTECTED.anchor_white)
-    black_px = sample(V2_PROTECTED.anchor_black)
-
-    # 클리핑 검사. 8bit 하드 한계 그대로(포화 255, 바닥 0) - 임계값이 아니라
-    # 카메라 양자화 한계 자체다.
-    if ((white_px <= 0) | (white_px >= 255) | (black_px <= 0) | (black_px >= 255)).any():
-        return None, FailureReason.ANCHOR_CLIPPED
+    white_px = sample(spec.anchor_white)
+    black_px = sample(spec.anchor_black)
 
     white_med = np.median(white_px, axis=0)  # (B,G,R)
     black_med = np.median(black_px, axis=0)
     span = white_med - black_med
-    if np.any(span <= 0):
-        return None, FailureReason.ANCHOR_SPAN_INVALID
 
-    reflectance = (rectified_bgr.astype(np.float64) - black_med) / span
-    anchor_values = {
-        "white": [float(v) for v in white_med[::-1]],  # B,G,R -> R,G,B 순으로 보고
-        "black": [float(v) for v in black_med[::-1]],
-    }
-    return ChannelNormalization(reflectance=reflectance, anchor_values=anchor_values), None
+    def out(reflectance, failure) -> ChannelNormalization:
+        return ChannelNormalization(
+            reflectance=reflectance,
+            anchor_values={
+                "white": [float(v) for v in white_med[::-1]],  # B,G,R -> R,G,B 순으로 보고
+                "black": [float(v) for v in black_med[::-1]],
+            },
+            anchor_contrast=float(span.mean()),
+            failure=failure,
+        )
+
+    # 클리핑 검사. 8bit 하드 한계 그대로(포화 255, 바닥 0) - 임계값이 아니라
+    # 카메라 양자화 한계 자체다.
+    #
+    # 두 묶음을 각각 본다. 한 식에 묶어 화소 단위로 OR 하면 두 묶음의 화소 수가
+    # 같아야만 성립하는데, 앵커 사각형이 정규화 좌표라 좌우가 1px 다르게
+    # 반올림되면 그 순간 터진다. 애초에 흰 앵커의 3번 화소와 검은 앵커의 3번
+    # 화소를 짝지을 이유도 없다.
+    def clipped(pixels: np.ndarray) -> bool:
+        return bool(((pixels <= 0) | (pixels >= 255)).any())
+
+    if clipped(white_px) or clipped(black_px):
+        return out(None, FailureReason.ANCHOR_CLIPPED)
+    if np.any(span <= 0):
+        return out(None, FailureReason.ANCHOR_SPAN_INVALID)
+
+    return out((rectified_bgr.astype(np.float64) - black_med) / span, None)
 
 
 def luma_of(reflectance: np.ndarray) -> np.ndarray:

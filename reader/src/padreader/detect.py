@@ -282,12 +282,35 @@ def border_matches(
     """
     if cfg.border_tolerance is None:
         return True
+    errors = _band_errors(gray, corners, tone, border_thickness)
+    if errors is None:
+        return False
+    # 띠가 끊기지 않은 변(None)은 여기서 실패로 친다. 바깥에서 안으로 들어가며
+    # 잉크가 탐색 깊이 끝까지 이어졌다는 뜻이고, 무채색 패드라면 테두리 바깥이
+    # 그늘이나 이음새에 먹혔다는 신호다.
+    limit = float(cfg.border_tolerance) * PROBE_PX
+    return all(e is not None and e <= limit for e in errors)
 
+
+def _band_errors(
+    gray: np.ndarray, corners: np.ndarray, tone: str, border_thickness: float
+) -> list[float | None] | None:
+    """네 변의 잉크 띠 두께 어긋남(px). 띠가 끊기지 않은 변은 ``None``.
+
+    정면으로 편 뒤 바깥에서 안으로 들어가며 첫 잉크 자리를 찾고, 잉크가 끊길
+    때까지의 길이를 잰다. 탐색 깊이 안에서 끝내 끊기지 않으면 그 변은 **재지
+    못한 것**이지 '많이 어긋난 것'이 아니다. 둘을 같은 숫자로 뭉개면 안 된다.
+
+    유채색 패드의 좌우 변이 실제로 그렇다 - 테두리 다음이 곧바로 측정면이고,
+    마젠타가 오츠 임계 아래로 들어가면 테두리와 측정면이 한 덩어리로 이어져
+    끊기는 자리가 없다. 위아래 변은 테두리 다음이 흰 인쇄 밴드라 정상적으로
+    끊긴다.
+    """
     from .rectify import rectify  # 순환 참조를 피해 지역에서 가져온다
 
     rect, _ = rectify(gray, corners, PROBE_PX)
     if rect.size == 0:
-        return False
+        return None
 
     # 임계는 잘라낸 패드 안에서 다시 잡는다. 이 시점에는 화면이 아니라 패드가
     # 히스토그램을 채우므로 오츠가 잉크와 여백 사이에 제대로 놓인다.
@@ -295,24 +318,50 @@ def border_matches(
     ink = rect < level if tone == "white" else rect > level
 
     expected = float(border_thickness) * PROBE_PX
-    tolerance = float(cfg.border_tolerance) * PROBE_PX
     # 네 모서리는 인쇄 번짐으로 뭉개져 있어 그 구간을 뺀다.
     span = slice(int(PROBE_PX * 0.12), int(PROBE_PX * 0.88))
     depth = max(3, int(round(expected * 3)))
 
-    for strip in (
-        ink[:depth, span],            # 위에서 아래로
-        ink[::-1][:depth, span],      # 아래에서 위로
-        ink.T[:depth, span],          # 왼쪽에서 오른쪽으로
-        ink.T[::-1][:depth, span],    # 오른쪽에서 왼쪽으로
-    ):
-        if _band_off(strip, expected, tolerance):
-            return False
-    return True
+    return [
+        _band_error(strip, expected)
+        for strip in (
+            ink[:depth, span],            # 위에서 아래로
+            ink[::-1][:depth, span],      # 아래에서 위로
+            ink.T[:depth, span],          # 왼쪽에서 오른쪽으로
+            ink.T[::-1][:depth, span],    # 오른쪽에서 왼쪽으로
+        )
+    ]
 
 
-def _band_off(strip: np.ndarray, expected: float, tolerance: float) -> bool:
-    """잉크 띠 두께가 규격에서 벗어났는지.
+def border_fit_error(
+    gray: np.ndarray, corners: np.ndarray, tone: str, border_thickness: float
+) -> float | None:
+    """잉크 띠 두께가 규격에서 얼마나 벗어났는지. 패드 한 변 대비 비율.
+
+    ``border_matches`` 의 판정을 임계 없이 **값 그대로** 낸 것이다. 0 이면 잉크
+    띠가 규격 두께와 정확히 맞고, 클수록 어긋났다. 잰 변들 중 가장 나쁜 값이다.
+
+    임계와 분리해 따로 두는 이유는 판정 결과만으로는 "왜 떨어졌는지"도
+    "얼마나 아슬아슬하게 붙었는지"도 알 수 없기 때문이다. 이 값을 판독 결과에
+    실어 두면 임계를 바꿔 사후에 다시 걸러 볼 수 있다 - 판독기가 버린 사진은
+    되살릴 수 없지만, 잔차를 달고 넘긴 사진은 재평가할 수 있다.
+
+    **띠가 끊기지 않은 변은 뺀다.** 그 변은 잰 것이 아니라 재지 못한 것이라,
+    큰 어긋남으로 섞으면 값이 그 변에 눌려 나머지 세 변이 안 보인다. 유채색
+    패드의 좌우 변이 늘 그렇다(``_band_errors`` 참고). 그렇게 빼고 나서 잰 변이
+    둘도 안 되면 ``None`` - 없는 것을 0(완벽히 맞음)으로 뭉개지 않는다.
+    """
+    errors = _band_errors(gray, corners, tone, border_thickness)
+    if errors is None:
+        return None
+    measured = [e for e in errors if e is not None]
+    if len(measured) < 2:
+        return None
+    return max(measured) / PROBE_PX
+
+
+def _band_error(strip: np.ndarray, expected: float) -> float | None:
+    """잉크 띠 두께가 규격에서 벗어난 정도(px). 띠가 안 끊기면 ``None``.
 
     바깥에서 안으로 들어가며 **첫 잉크 자리**를 찾고, 거기서 잉크가 끊길
     때까지의 길이를 잰다. 0 번째 줄부터 세지 않는 이유는, 사각형이 실제
@@ -321,6 +370,11 @@ def _band_off(strip: np.ndarray, expected: float, tolerance: float) -> bool:
 
     열마다 따로 재고 중앙값을 쓴다. 여백에 인쇄물이 걸친 열이 섞여도
     중앙값은 흔들리지 않는다.
+
+    띠 끝을 찾으려고 맨 아래에 비잉크 한 줄을 덧대는데, 그 덧댄 줄에서 끝난
+    열은 **탐색 깊이 안에서 끊기지 않은 것**이다. 그런 열이 절반을 넘으면 이
+    변은 재지 못한 것으로 보고 ``None`` 을 낸다 - 깊이만큼의 두께를 실측값인
+    양 내보내면 '아주 많이 어긋났다' 로 읽힌다.
     """
     padded = np.vstack([strip, np.zeros((1, strip.shape[1]), bool)])
     rows = np.arange(padded.shape[0])[:, None]
@@ -329,8 +383,11 @@ def _band_off(strip: np.ndarray, expected: float, tolerance: float) -> bool:
     after = (~padded) & (rows >= first[None, :])
     end = np.argmax(after, axis=0)                    # 잉크가 끊기는 줄
 
+    if float((end >= strip.shape[0]).mean()) > 0.5:
+        return None
+
     widths = (end - first).astype(np.float64)
-    return abs(float(np.median(widths)) - expected) > tolerance
+    return abs(float(np.median(widths)) - expected)
 
 
 def detect_pads(

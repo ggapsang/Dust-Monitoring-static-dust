@@ -185,6 +185,23 @@ class ChromaConfig:
     ``PAD_TYPE_SATURATION_THRESHOLD`` 주석에 상세 근거가 있다.
     """
 
+    detect_saturation_threshold: float = 0.35
+    """색으로 패드를 찾을 때(``detect_pads_chroma``) 후보 마스크의 채도 하한.
+
+    위 판별 기준과 같은 값에서 출발하지만 **다른 항목이다.** 하나로 묶으면
+    한쪽을 못 건드린다 - 검출은 후보를 넉넉히 내는 쪽이 유리해 내리고 싶고,
+    판별은 무채색 실촬영 최댓값(0.184) 위에 있어야 해서 못 내린다.
+    """
+
+    spec: str = "v3"
+    """유채색 패드의 도안 규격. 무채색 규격(``spec``)과 따로 둔다.
+
+    현장에 붙은 유채색 패드는 ``assets/make_pad_chroma.py`` 가 그린 것이고,
+    그 좌표는 이 저장소 생성기의 ``v2`` 계보와 다르다. 예전에는 유채색
+    정규화가 ``v2_protected`` 를 코드에 박아 쓰다가 앵커 흑백이 반대로 잡혀
+    판독이 전부 실패했다. 규격은 설정으로 고른다.
+    """
+
 
 @dataclass
 class ScoreConfig:

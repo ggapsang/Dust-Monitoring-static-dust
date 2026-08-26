@@ -297,6 +297,51 @@ class ChromaNormalizationInfo:
 
 
 @dataclass
+class Verification:
+    """검출한 사각형이 정말 규격대로의 패드인지를 재 본 잔차. **판정에 쓰지 않는다.**
+
+    검출은 "패드인가 아닌가"를 앞단 필터(면적·형태·채도 따위)로 가르는데, 그
+    필터는 조이면 미검출이 나고 풀면 오검출이 난다. 벗어나기 어려운 구조다.
+    벗어나는 길은 검출한 뒤 **규격에 대고 다시 재는 것**이다 - 후보로부터
+    계산된 바로 그 자리에 잉크 띠가, 앵커가, 번호가 있는지 묻는다. 무작위
+    물체가 이 조건들을 동시에 만족할 확률은 곱으로 줄어든다.
+
+    여기 있는 값은 그 재 본 결과이고, 아직 **아무것도 막지 않는다.** 임계를
+    비운 채로 현장 사진을 쌓고 분포를 본 뒤에 선을 넣는다 - ``quality`` 가
+    걸어 온 순서와 같다. 판독기가 버린 사진은 되살릴 수 없지만, 잔차를 달고
+    넘긴 사진은 기준을 바꿔 재평가할 수 있다.
+    """
+
+    border_fit_error: float | None = None
+    """잉크 띠 두께가 규격에서 벗어난 정도. 패드 한 변 대비 비율, 네 변 중 최악.
+
+    0 에 가까울수록 규격대로다. 이것이 큰데 검출은 성공했다면 사각형이 패드
+    경계가 아니라 그림자나 이음새를 물었다는 뜻이다."""
+
+    anchor_contrast: float | None = None
+    """유채색 정규화의 분모, ``흰 앵커 - 검은 앵커`` 의 채널 평균(raw 0-255).
+
+    양수이고 충분히 커야 한다. **음수면 앵커 자리를 흑백 반대로 짚고 있고**,
+    0 근처면 두 자리가 같은 것을 재고 있다 - 둘 다 좌표가 실물 도안과 어긋
+    났다는 신호다. 무채색 패드는 이 보정을 쓰지 않으므로 ``None``."""
+
+    point_id_agrees: bool | None = None
+    """번호를 자유롭게 읽은 결과가 배정된 개소 번호와 같은가.
+
+    후보 안에서 배정하면(``expected_point_ids``) 없는 번호는 안 나오지만,
+    **오검출된 사각형에도 실제 번호가 붙는다.** 자유 판독과 어긋나면 그
+    배정이 밀어붙인 것일 수 있다는 표시다. 후보를 안 받았으면 둘이 같을 수
+    밖에 없으므로 항상 참이고, 그때는 이 값에 뜻이 없다."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "border_fit_error": _f(self.border_fit_error),
+            "anchor_contrast": _f(self.anchor_contrast),
+            "point_id_agrees": self.point_id_agrees,
+        }
+
+
+@dataclass
 class ChromaDiagnostics:
     """유채색 지표가 튈 때 원인을 가리는 참고값. 판정에 쓰지 않는다."""
 
@@ -360,6 +405,9 @@ class PadReadResult:
     """명도 증가(백색 분진 방향) 기반."""
     chroma_diagnostics: ChromaDiagnostics = field(default_factory=ChromaDiagnostics)
 
+    verification: Verification = field(default_factory=Verification)
+    """검출 결과를 규격에 대고 다시 잰 잔차. 아직 판정에 쓰지 않는다."""
+
     point_id: str | None = None
     point_id_status: PointIdStatus = PointIdStatus.DISABLED
     point_id_confidence: float | None = None
@@ -414,6 +462,7 @@ class PadReadResult:
             "luma_dark": self.luma_dark.to_dict(),
             "luma_light": self.luma_light.to_dict(),
             "chroma_diagnostics": self.chroma_diagnostics.to_dict(),
+            "verification": self.verification.to_dict(),
             "point_id": self.point_id,
             "point_id_raw": self.point_id_raw,
             "point_id_status": self.point_id_status.value,

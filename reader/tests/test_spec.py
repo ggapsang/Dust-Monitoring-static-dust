@@ -259,3 +259,111 @@ def test_anchor_rects_are_mirror_symmetric() -> None:
         left, right = sorted(group, key=lambda r: r.x0)
         assert abs(left.x0 - (1.0 - right.x1)) < 1e-9
         assert abs(left.y0 - right.y0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# v3 — 실제로 인쇄해 현장에 붙인 도안
+#
+# 위의 검증은 전부 이 저장소 생성기가 그리는 legacy/v2 도안을 본다. 현장에
+# 붙은 패드는 그 계보가 아니라 ``assets/make_pad_dual_tones.py`` 와 그 유채색
+# 변종이 그린 것이고, 두 계보의 좌표가 서로 달랐다. 그런데 그 어긋남을 아무도
+# 재지 않아, 판독기가 v2 좌표로 실물을 재면서 유채색 판독이 전부 실패했다 -
+# 앵커 흑백이 반대라 정규화의 분모가 음수가 됐다. 여기서 막는다.
+# ---------------------------------------------------------------------------
+
+V3_SAMPLES = {
+    "white": ASSETS / "pad_dual_tones" / "pad_1083_white.png",
+    "black": ASSETS / "pad_dual_tones" / "pad_1083_black.png",
+    "magenta": ASSETS / "pad_dual_tones" / "pad_1088_magenta.png",
+}
+
+V3_QUIET = 0.125
+"""실물 도안이 패드 바깥에 두른 흰 여백. 패드 한 변 대비 비율."""
+
+
+def v3_frame(path: Path) -> tuple[np.ndarray, int, int]:
+    """(BGR 이미지, 패드 외곽 원점 px, 패드 한 변 px)."""
+    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    assert img is not None, f"실물 도안을 읽을 수 없다: {path}"
+    canvas = img.shape[1]
+    pad = round(canvas / (1.0 + 2 * V3_QUIET))
+    return img, (canvas - pad) // 2, pad
+
+
+def v3_patch(path: Path, rect: spec.Rect) -> np.ndarray:
+    img, origin, pad = v3_frame(path)
+    x0, x1 = int(origin + rect.x0 * pad), int(origin + rect.x1 * pad)
+    y0, y1 = int(origin + rect.y0 * pad), int(origin + rect.y1 * pad)
+    patch = img[y0:y1, x0:x1]
+    assert patch.size > 0
+    return patch
+
+
+@pytest.mark.parametrize("name", sorted(V3_SAMPLES))
+def test_v3_anchor_rects_hit_the_right_shade(name: str) -> None:
+    """``anchor_white`` 자리가 실제로 밝고 ``anchor_black`` 자리가 어두운지.
+
+    **이것이 유채색 판독을 전부 실패시켰던 오류다.** 규격이 두 자리를 반대로
+    알고 있으면 정규화의 분모 ``흰앵커 - 검은앵커`` 가 음수가 되어
+    ``ANCHOR_SPAN_INVALID`` 로 떨어진다. 이름과 실물이 맞는지 여기서 잰다.
+
+    마젠타 도안은 측정면만 유채색이고 앵커가 놓인 상단 밴드는 백색 패드와
+    같으므로 ``V3`` 를 쓴다.
+    """
+    target = spec.V3_BLACK if name == "black" else spec.V3
+    for rect in target.anchor_white:
+        assert v3_patch(V3_SAMPLES[name], rect).mean() > 200, f"흰 앵커 자리가 밝지 않다: {rect}"
+    for rect in target.anchor_black:
+        assert v3_patch(V3_SAMPLES[name], rect).mean() < 55, f"검은 앵커 자리가 어둡지 않다: {rect}"
+
+
+def test_v3_anchor_span_is_positive() -> None:
+    """정규화의 분모가 양수인지. 위 검증의 결론을 판독기가 쓰는 형태로 다시 쓴 것이다."""
+    for name, target in (("white", spec.V3), ("black", spec.V3_BLACK), ("magenta", spec.V3)):
+        white = np.mean([v3_patch(V3_SAMPLES[name], r).mean() for r in target.anchor_white])
+        black = np.mean([v3_patch(V3_SAMPLES[name], r).mean() for r in target.anchor_black])
+        assert white - black > 100, f"{name}: 앵커 대비가 {white - black:.1f} 밖에 안 된다"
+
+
+def test_v3_margin_is_exactly_the_measurement_area() -> None:
+    """``margin_raw`` 가 인쇄된 측정면과 정확히 맞는지.
+
+    유채색 검출은 눈에 보이는 측정면 덩어리에서 패드 외곽을 역산한다. 이
+    사각형이 실물과 어긋나면 역산한 외곽이 그 비율만큼 밀려 앵커 자리가 통째로
+    빗나간다.
+
+    측정면만 유채색이므로 **채도가 있는 구간**을 세로·가로로 직접 훑어
+    ``margin_raw`` 와 맞는지 잰다. '바깥은 흰 바탕' 으로 확인하지 않는다 -
+    아래쪽은 흰 바탕이 아니라 선군이 곧바로 붙어 있다.
+    """
+    img, origin, pad = v3_frame(V3_SAMPLES["magenta"])
+    rect = spec.V3.margin_raw
+
+    field = img[origin : origin + pad, origin : origin + pad].astype(np.int16)
+    mx = field.max(axis=2)
+    chroma = (mx - field.min(axis=2)) > 40  # 무채색 인쇄는 세 채널이 같다
+
+    middle = pad // 2
+    top, bottom = runs(chroma[:, middle])[0]
+    left, right = runs(chroma[middle, :])[0]
+
+    for label, got, want in (
+        ("위", top, rect.y0),
+        ("아래", bottom, rect.y1),
+        ("왼쪽", left, rect.x0),
+        ("오른쪽", right, rect.x1),
+    ):
+        assert abs(got - want * pad) <= TOL_PX, (
+            f"측정면 {label} 경계가 규격과 어긋난다: 실물 {got / pad:.4f}, 규격 {want:.4f}"
+        )
+
+
+def test_v3_geometry_matches_the_printed_artwork() -> None:
+    """테두리 두께와 모서리 블록 자리가 실물과 맞는지. 세로 중앙선을 훑어 잰다."""
+    img, origin, pad = v3_frame(V3_SAMPLES["magenta"])
+    column = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[:, origin + pad // 2]
+    ink = column[origin : origin + pad] < 128
+
+    border = runs(ink)[0]
+    assert border[0] == 0
+    assert abs(border[1] / pad - spec.V3.border_thickness) < TOL_PX / pad

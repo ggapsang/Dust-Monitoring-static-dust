@@ -41,7 +41,7 @@ from .chroma import (
     saturation_of,
 )
 from .config import Config, PointIdConfig, load_config
-from .detect import Detection, detect_pads
+from .detect import Detection, border_fit_error, detect_pads
 from .dust import DustMap, extract_dust
 from .normalize import normalize
 from .optical_density import compute_optical_density
@@ -55,6 +55,7 @@ from .result import (
     PadReadBatch,
     PadReadResult,
     QualityMetrics,
+    Verification,
 )
 from .score import compute_scores
 from .spec import PadSpec, get_spec
@@ -89,7 +90,14 @@ class _Analysis:
     chroma_failure: FailureReason | None
     """유채색인데 앵커 정규화에 실패했으면 그 사유. 그 외에는 ``None``."""
     chroma_anchor_values: dict[str, Any] | None
-    """앵커 두 패치의 raw 관측값(채널별). 정규화 성공 시에만 채운다."""
+    """앵커 두 패치의 raw 관측값(채널별). **실패해도 채운다** - 왜 실패했는지는
+    사유 이름이 아니라 이 값이 말해 준다."""
+    anchor_contrast: float | None
+    """``흰 앵커 - 검은 앵커`` 의 채널 평균(raw). 음수면 앵커 자리를 흑백 반대로
+    짚고 있다는 뜻이다. 무채색이면 ``None``."""
+    border_fit_error: float | None
+    """잉크 띠 두께가 규격에서 벗어난 정도(패드 한 변 대비). 검출한 사각형이
+    정말 패드 경계인지의 잔차다."""
     point_id: str | None
     point_id_status: Any
     point_id_confidence: float | None
@@ -130,12 +138,15 @@ def _analyze_all(
     찍혔을 때 하나 때문에 전부 버릴 이유가 없다.
     """
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    # 유채색 패드는 규격이 따로다. 현장에 붙은 유채색 도안의 좌표가 무채색
+    # 규격(cfg.spec)과 달라서, 그쪽 좌표로 재면 앵커도 측정면도 어긋난다.
+    spec = get_spec(cfg.chroma.spec) if mode == "chroma" else spec
     # mode="chroma" 는 무채색 검출(잉크 링 찾기)을 아예 안 쓴다 - 유채색
     # 측정면이 어둡게 찍히면 잉크와 밝기로 안 갈려 링 자체가 안 잡히기
     # 때문이다(실측: 명도 13인데 채도는 0.91). 색으로 직접 찾는
     # detect_pads_chroma 를 쓴다. 무채색 경로(detect_pads)는 그대로 둔다.
     detections = (
-        detect_pads_chroma(bgr, spec, cfg.detect, cfg.chroma.saturation_threshold)
+        detect_pads_chroma(bgr, spec, cfg.detect, cfg.chroma.detect_saturation_threshold)
         if mode == "chroma"
         else detect_pads(gray, tone, cfg.detect, spec.border_thickness)
     )
@@ -183,23 +194,29 @@ def _analyze(
     chroma_reflectance: np.ndarray | None = None
     chroma_failure: FailureReason | None = None
     chroma_anchor_values: dict[str, Any] | None = None
+    anchor_contrast: float | None = None
+
+    def calibrate() -> None:
+        nonlocal chroma_reflectance, chroma_failure, chroma_anchor_values, anchor_contrast
+        norm = channel_normalize(rectified_bgr, size, spec)
+        # 실패해도 앵커 실측값은 남긴다. 사유 이름만으로는 좌표가 어긋난
+        # 것인지 사진이 나쁜 것인지 밖에서 가릴 수 없다.
+        chroma_reflectance = norm.reflectance
+        chroma_failure = norm.failure
+        chroma_anchor_values = norm.anchor_values
+        anchor_contrast = norm.anchor_contrast
+
     if mode == "chroma":
         # 색으로 직접 찾은 것이니 이미 유채색이라는 게 확정이다 - 다시
         # 판별할 필요 없이 바로 채널 정규화로 간다.
         pad_type = "chroma"
-        channel_norm, chroma_failure = channel_normalize(rectified_bgr, size)
-        if channel_norm is not None:
-            chroma_reflectance = channel_norm.reflectance
-            chroma_anchor_values = channel_norm.anchor_values
+        calibrate()
     elif mode != "legacy":
         pad_type, _saturation = classify_pad_type(
             rectified_bgr, spec, size, cfg.chroma.saturation_threshold
         )
         if pad_type == "chroma":
-            channel_norm, chroma_failure = channel_normalize(rectified_bgr, size)
-            if channel_norm is not None:
-                chroma_reflectance = channel_norm.reflectance
-                chroma_anchor_values = channel_norm.anchor_values
+            calibrate()
 
     normalization = normalize(rectified_gray, spec, cfg.normalize, size)
     if normalization is None:
@@ -238,6 +255,13 @@ def _analyze(
             chroma_reflectance=chroma_reflectance,
             chroma_failure=chroma_failure,
             chroma_anchor_values=chroma_anchor_values,
+            anchor_contrast=anchor_contrast,
+            # 무채색 검출은 이미 이 잔차로 걸러 통과한 것만 여기 온다. 유채색
+            # 검출은 아직 걸러 내지 않으므로, 이 값이 곧 "색으로 찾은 사각형이
+            # 정말 패드였는지" 를 사후에 볼 수 있는 유일한 근거다.
+            border_fit_error=border_fit_error(
+                gray, corners, tone, spec.border_thickness
+            ),
             point_id=target_value,
             point_id_status=target_status,
             point_id_confidence=target_confidence,
@@ -399,6 +423,12 @@ def read_pads(
     return finish(PadReadBatch(success=any(p.success for p in pads), pads=pads))
 
 
+def _contrast(analysis: _Analysis) -> str:
+    """앵커 대비를 사유 문구에 적을 짧은 표기."""
+    value = analysis.anchor_contrast
+    return "측정 못함" if value is None else f"{value:+.1f}"
+
+
 def _match(
     reading: _Analysis, readings: list[_Analysis], bases: list[_Analysis]
 ) -> _Analysis | None:
@@ -436,6 +466,18 @@ def _compare(
         "point_id_raw": reading.point_id_raw,
         "point_id_status": reading.point_id_status,
         "point_id_confidence": reading.point_id_confidence,
+        # 실패로 끝나는 길에도 같이 내보낸다. 잔차가 필요한 때가 바로 실패했을
+        # 때다 - 사유 이름만 받으면 좌표가 어긋난 것인지 사진이 나쁜 것인지
+        # 밖에서 가릴 수 없다.
+        "verification": Verification(
+            border_fit_error=reading.border_fit_error,
+            anchor_contrast=reading.anchor_contrast,
+            point_id_agrees=(
+                None
+                if reading.point_id is None or reading.point_id_raw is None
+                else reading.point_id == reading.point_id_raw
+            ),
+        ),
     }
 
     if base is None:
@@ -504,9 +546,22 @@ def _compare(
     if reading.pad_type == "chroma":
         failure = reading.chroma_failure or base.chroma_failure
         if failure is not None:
+            # 앵커 실측값을 사유에 같이 적는다. "성립하지 않는다" 만으로는
+            # 좌표가 어긋난 것인지 사진이 나쁜 것인지 가릴 수 없다 - 대비가
+            # 음수면 앵커 자리를 흑백 반대로 짚고 있다는 뜻이다.
             return PadReadResult.failed(
                 failure,
-                "유채색 패드의 앵커 정규화가 성립하지 않는다",
+                "유채색 패드의 앵커 정규화가 성립하지 않는다 "
+                f"(앵커 대비 판독 {_contrast(reading)}, 기준 {_contrast(base)})",
+                chroma_normalization=ChromaNormalizationInfo(
+                    success=False, failure_reason=failure.value
+                ),
+                chroma_diagnostics=ChromaDiagnostics(
+                    anchor_values={
+                        "reading": reading.chroma_anchor_values,
+                        "baseline": base.chroma_anchor_values,
+                    }
+                ),
                 **partial,
             )
 
