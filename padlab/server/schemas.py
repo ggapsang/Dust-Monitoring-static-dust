@@ -11,9 +11,22 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+"""촬영 단위·개소 번호. 비어 있으면 안 된다.
+
+개소와 촬영 단위는 번호가 곧 기본키이고, 낱건 API 는 전부 URL 경로로
+가리킨다(``/points/{point_id}``). 번호가 빈 문자열이면 그 경로가
+``/points/`` 로 접혀 어느 낱건 라우트에도 걸리지 않아 405 가 난다 - 화면에는
+행이 보이는데 수정도 삭제도 되지 않는 상태로 갇힌다. 실제로 그렇게 갇힌 행이
+한 건 생겼다. 들어오는 자리에서 막는다.
+
+공백만 있는 번호도 함께 막는다. 경로로는 가리킬 수 있지만 화면에서 빈칸과
+구분되지 않아 같은 혼란을 만든다.
+"""
 
 Tone = Literal["white", "black", "chroma"]
 """무채색 패드는 분진 색과 반대인 바탕을 고른다(어두운 분진->white, 밝은
@@ -23,14 +36,14 @@ Tone = Literal["white", "black", "chroma"]
 
 
 class TargetIn(BaseModel):
-    target_id: str = Field(description="AMR 촬영 단위. 에코프로비엠 체계의 값")
+    target_id: Identifier = Field(description="AMR 촬영 단위. 에코프로비엠 체계의 값")
     name: str | None = None
     location_desc: str | None = Field(default=None, description="촬영 위치 설명")
     note: str | None = None
 
 
 class TargetPatch(BaseModel):
-    target_id: str | None = Field(
+    target_id: Identifier | None = Field(
         default=None,
         description="촬영 단위 번호 자체를 바꿀 때만 넣는다. 속한 개소와 사진이 따라온다",
     )
@@ -40,13 +53,18 @@ class TargetPatch(BaseModel):
 
 
 class TargetOut(TargetIn):
+    target_id: str
+    """내보낼 때는 제약을 풀어 둔다. 제약이 걸리기 전에 들어간 행이 DB 에
+    남아 있으면, 그 한 건 때문에 목록 전체가 500 이 되어 지울 수단까지
+    사라진다. 막는 자리는 들어오는 쪽이다."""
+
     created_at: datetime
     point_count: int = 0
 
 
 class PointIn(BaseModel):
-    point_id: str = Field(description="패드에 인쇄된 관측 개소 번호")
-    target_id: str = Field(description="이 개소가 찍히는 촬영 단위")
+    point_id: Identifier = Field(description="패드에 인쇄된 관측 개소 번호")
+    target_id: Identifier = Field(description="이 개소가 찍히는 촬영 단위")
     name: str | None = None
     location_desc: str | None = Field(default=None, description="물리적 위치 설명")
     tone: Tone = Field(
@@ -60,14 +78,14 @@ class PointIn(BaseModel):
 
 
 class PointPatch(BaseModel):
-    point_id: str | None = Field(
+    point_id: Identifier | None = Field(
         default=None,
         description=(
             "개소 번호 자체를 바꿀 때만 넣는다. 기준 사진과 판독 이력이 따라온다. "
             "판독기가 읽어 낸 번호(read_point_id)는 그때 값 그대로 남는다."
         ),
     )
-    target_id: str | None = None
+    target_id: Identifier | None = None
     name: str | None = None
     location_desc: str | None = None
     tone: Tone | None = None
@@ -75,6 +93,10 @@ class PointPatch(BaseModel):
 
 
 class PointOut(PointIn):
+    point_id: str
+    target_id: str
+    """``TargetOut`` 과 같은 이유로 내보낼 때는 제약을 풀어 둔다."""
+
     created_at: datetime
     has_baseline: bool = False
 

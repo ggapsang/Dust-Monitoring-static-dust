@@ -1548,6 +1548,9 @@ function bind() {
   });
 
   $('#n-target-go').addEventListener('click', async () => {
+    // 번호가 곧 기본키이고 낱건 API 를 URL 경로로 가리킨다. 빈 번호로
+    // 들어가면 그 경로가 /targets/ 로 접혀 수정도 삭제도 안 되는 행이 된다.
+    if (!$('#n-target-id').value.trim()) { toast('촬영 단위 번호를 넣는다', true); return; }
     try {
       await api('/api/targets', {
         method: 'POST',
@@ -1565,6 +1568,9 @@ function bind() {
   });
 
   $('#n-point-go').addEventListener('click', async () => {
+    // 촬영 단위와 같은 이유로 빈 번호를 막는다.
+    if (!$('#n-point-id').value.trim()) { toast('개소 번호를 넣는다', true); return; }
+    if (!$('#n-point-target').value) { toast('촬영 단위를 고른다', true); return; }
     try {
       await api('/api/points', {
         method: 'POST',
