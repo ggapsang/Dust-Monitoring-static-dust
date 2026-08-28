@@ -19,8 +19,10 @@ import cv2
 import numpy as np
 
 from .config import DetectConfig
-from .detect import Detection
+from .detect import Detection, border_fit_error
 from .geometry import order_corners, quad_area, quad_side_lengths, quads_overlap
+from .orient import determine_orientation
+from .rectify import rectify
 from .result import ChromaFieldScore, FailureReason
 from .spec import PadSpec, Rect
 
@@ -119,6 +121,7 @@ def detect_pads_chroma(
     이미 규격에 있고, 같은 평면이므로 사영변환도 하나다.
     """
     height, width = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     b, g, r = bgr[..., 0].astype(np.float64), bgr[..., 1].astype(np.float64), bgr[..., 2].astype(np.float64)
     mx = np.maximum(np.maximum(r, g), b)
     mn = np.minimum(np.minimum(r, g), b)
@@ -165,13 +168,7 @@ def detect_pads_chroma(
         if _hue_distance_deg(hue, MAGENTA_HUE_DEG) > HUE_TOLERANCE_DEG:
             continue
 
-        # 역산의 기준은 ``spec.margin`` 이 아니라 ``spec.margin_raw`` 다.
-        # 눈에 보이는 유채색 덩어리는 인쇄된 측정면 전체이고, ``spec.margin``
-        # 은 거기서 판독 여유(margin_inset)만큼 안으로 물러난 사각형이라
-        # 서로 다른 물건이다. 물러난 쪽으로 역산하면 패드 외곽이 그 비율만큼
-        # 부풀어 앵커 자리가 통째로 밀린다.
-        margin_corners = _align_to_margin(order_corners(quad), spec.margin_raw)
-        pad_corners = _pad_corners_from_margin(margin_corners, spec.margin_raw)
+        pad_corners = _best_pad_corners(gray, order_corners(quad), spec)
         candidates.append(
             Detection(
                 corners=pad_corners,
@@ -231,41 +228,93 @@ def _fit_quad(contour: np.ndarray) -> np.ndarray | None:
     return None
 
 
-def _align_to_margin(quad: np.ndarray, margin_rect: Rect) -> np.ndarray:
-    """검출한 사각형의 꼭짓점 순서를 측정면 규격의 가로·세로에 맞춘다.
+def _aspect_turn(quad: np.ndarray, margin_rect: Rect) -> int:
+    """측정면 종횡비로 대응을 고른다. 0 또는 1 (한 칸 돌림).
 
-    ``order_corners`` 가 주는 것은 **사진 좌표계의** 좌상단부터다. 그런데 패드가
-    사진 안에서 90도 돌아가 있으면 사진의 좌상단 꼭짓점은 측정면 규격의
-    좌상단이 아니다. 측정면은 정사각형이 아니라(가로:세로 = 0.8822:0.6286 =
-    1.40) 이 어긋남이 그대로 역산에 들어가면 좌표계가 파괴된다 - 실촬영에서
-    역산된 패드 외곽의 네 변이 [317, 214, 111, 595] 로 나왔다. 정사각형이어야
-    할 것이 5:1 이 된 것이다.
+    측정면이 정사각형이 아닐 때만 뜻이 있다. 정사각형이면 어느 쪽이든 비율이
+    1 이라 두 값이 같아지고 항상 0 이 나온다 - 그때는 이 함수가 아무 말도 하지
+    않는 것이 맞다.
 
-    돌아간 것은 흔한 일이다. ``cv2.imread`` 는 EXIF 회전을 반영하지 않으므로,
-    가로로 든 카메라로 찍어도 원시 배열은 세로다.
-
-    가로세로 어느 쪽이 규격의 가로인지는 **비율로 정해진다.** 한 칸 돌린 쪽이
-    규격 종횡비에 더 가까우면 그쪽을 쓴다. 로그로 견주는 이유는 2배 늘어난
-    것과 절반으로 준 것을 같은 크기의 어긋남으로 보기 위해서다.
-
-    180도 어긋남은 여기서 풀지 않는다. 사각형을 반 바퀴 돌려도 종횡비가 같아
-    이 방법으로는 가릴 수 없고, 뒤따르는 회전 판정(``orient.py``)이 모서리
-    블록을 보고 바로잡는 몫이다.
+    로그로 견주는 이유는 2배 늘어난 것과 절반으로 준 것을 같은 크기의 어긋남
+    으로 보기 위해서다.
     """
     sides = quad_side_lengths(quad)
     horizontal = (sides[0] + sides[2]) / 2.0
     vertical = (sides[1] + sides[3]) / 2.0
     if horizontal <= 0 or vertical <= 0:
-        return quad
+        return 0
     want = margin_rect.width / margin_rect.height
     got = horizontal / vertical
-    if abs(math.log(got / want)) > abs(math.log(1.0 / (got * want))):
-        return np.roll(quad, -1, axis=0)
-    return quad
+    return 1 if abs(math.log(got / want)) > abs(math.log(1.0 / (got * want))) else 0
+
+
+TURN_PROBE_PX = 256
+"""대응을 고를 때 쓸 정면 보정 크기. 띠 두께와 모서리 블록만 보므로 작아도 된다."""
+
+
+def _best_pad_corners(
+    gray: np.ndarray, quad: np.ndarray, spec: PadSpec
+) -> np.ndarray:
+    """측정면 네 꼭짓점을 패드 외곽으로 역산한다. 네 대응 중 맞는 것을 고른다.
+
+    ``order_corners`` 가 주는 것은 **사진 좌표계의** 좌상단부터다. 패드가 사진
+    안에서 돌아가 있으면 그것이 규격의 좌상단이 아니다. 돌아간 것은 흔한 일이다
+    - ``cv2.imread`` 는 EXIF 회전을 반영하지 않으므로, 가로로 든 카메라로 찍어도
+    원시 배열은 세로다.
+
+    **두 가지를 따로 본다. 하나로는 못 가린다.**
+
+    *90도 축* 은 테두리 잉크 띠로 가른다. 측정면이 정사각형이 아니면 90도 틀린
+    대응이 외곽을 통째로 일그러뜨려(실측 5.3:1) 띠 두께가 규격에서 크게 벗어난다.
+
+    *180도 축* 은 띠로 가릴 수 없다. 반 바퀴 돌려도 네 변의 띠 두께가 그대로라,
+    띠만 보고 고르면 잡음으로 고르게 된다 - 실측에서 0.0277 과 0.0394 를 견주어
+    **틀린 쪽**을 골랐고 앵커 대비가 +46.5 에서 -2.7 로 뒤집혔다. 측정면이 패드
+    안에서 세로로 중앙이 아니라(0.5 가 아니라 0.5112), 180도가 틀리면 역산 외곽이
+    약 0.021 패드(1120 기준 24px)만큼 밀려 앵커 창이 패치를 벗어난다.
+
+    그래서 180도는 **모서리 블록**으로 가른다. 비어 있는 모서리가 규격 자리에
+    오는 대응이 곧 실제 패드 방향과 맞는 대응이다(``orient.determine_orientation``
+    이 이미 하는 판정을 그대로 쓴다). 그 대응을 고르면 뒤따르는 회전 보정이 할
+    일이 없어져 외곽이 밀리지 않는다.
+
+    둘 다 못 가리면 종횡비로 고른다. 측정면이 좌우 테두리에 붙어 있는 도안
+    (개정 전)은 어둡게 찍히면 잉크와 측정면이 이어져 띠가 끝나는 자리를 못 찾는데,
+    그때 회전 0 으로 주저앉으면 종횡비만으로도 가릴 수 있었을 것을 놓친다.
+    """
+    turns: list[tuple[np.ndarray, float | None, bool, float]] = []
+    for turn in range(4):
+        corners = _pad_corners_from_margin(np.roll(quad, -turn, axis=0), spec.margin_raw)
+        # 유채색 패드의 바탕 밴드는 백색이고 인쇄는 검정이라 극성이 white 와 같다.
+        error = border_fit_error(gray, corners, "white", spec.border_thickness)
+        preview, _ = rectify(gray, corners, TURN_PROBE_PX)
+        orientation = determine_orientation(preview, spec, "white", TURN_PROBE_PX)
+        turns.append(
+            (corners, error, orientation.rotation_index == 0, orientation.margin)
+        )
+
+    # 방향이 맞는 대응부터 본다. 그중 띠가 규격에 가장 맞는 것, 띠를 못 재면
+    # 회전 판정이 가장 또렷한 것.
+    upright = [t for t in turns if t[2]]
+    if upright:
+        measured = [t for t in upright if t[1] is not None]
+        if measured:
+            return min(measured, key=lambda t: t[1])[0]
+        return max(upright, key=lambda t: t[3])[0]
+
+    measured = [t for t in turns if t[1] is not None]
+    if measured:
+        return min(measured, key=lambda t: t[1])[0]
+    return turns[_aspect_turn(quad, spec.margin_raw)][0]
 
 
 def _pad_corners_from_margin(margin_corners_photo: np.ndarray, margin_rect: Rect) -> np.ndarray:
     """측정 여백의 사진 좌표 네 꼭짓점 -> 패드 외곽 네 꼭짓점.
+
+    기준은 ``spec.margin`` 이 아니라 ``spec.margin_raw`` 다. 눈에 보이는 유채색
+    덩어리는 인쇄된 측정면 **전체**이고, ``spec.margin`` 은 거기서 판독
+    여유(``margin_inset``)만큼 안으로 물러난 다른 사각형이다. 물러난 쪽으로
+    역산하면 패드 외곽이 그 비율만큼 부풀어 앵커 자리가 통째로 밀린다.
 
     측정 여백과 패드 외곽은 같은 평면 위의 두 사각형이라 사영변환이 하나로
     통한다. 여백의 정규화 좌표(``margin_rect``)에서 사진 좌표로 가는 변환을

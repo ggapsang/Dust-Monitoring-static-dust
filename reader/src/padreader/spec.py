@@ -462,12 +462,87 @@ V3_BLACK = replace(
 않으면 흑색 패드에서 정규화 분모의 부호가 뒤집힌다.
 """
 
+# --------------------------------------------------------------------------
+# chroma_v2 — 유채색 도안 개정판 (assets/make_pad_chroma_v2.py)
+# --------------------------------------------------------------------------
+#
+# ``V3`` 는 그대로 둔다. 현장에 붙어 있는 패드와 이미 찍어 둔 기준 사진이 그
+# 도안이라, 덮어쓰면 지난 판독을 다시 읽을 수 없다. 실물을 교체하면
+# ``chroma.spec`` 을 이 규격으로 바꾼다.
+#
+# 무엇이 달라졌나 - 실물 PNG 를 픽셀 스캔해 확인한 값이다.
+#
+# 1. **측정면이 정사각형이 되었다** (0.6822 x 0.6831, 실측). 앞 도안은
+#    1.40:1 이라, 사진에서 패드가 90도 돌아가 있으면(EXIF 회전을 imread 가
+#    반영하지 않아 흔하다) 가로세로가 뒤바뀌어 역산이 무너졌다 - 정사각형
+#    이어야 할 외곽이 5.3:1 로 나온 사례가 있었다.
+# 2. **측정면 좌우에 흰 여백이 생겼다** (0.1000, 테두리의 1.70배). 앞 도안은
+#    패드 중간 높이에서 테두리 다음이 곧장 측정면이라, 어둡게 찍히면 잉크와
+#    측정면이 한 덩어리가 되어 좌우 두 변의 띠 검증이 아예 성립하지 않았다.
+#    이제 네 변 모두 잰다.
+# 3. **선군을 뺐다.** 측정면을 키우느라 아래로 밀린 선군이 테두리와 0.0090
+#    까지 붙어, 실물 사진에서 흐려지면 테두리와 한 덩어리가 되어 아래 변
+#    검증이 어긋날 참이었다. 좌우를 살리고 아래를 잃을 이유가 없다.
+# 4. **앵커가 커졌다** (0.0600 -> 0.0680). 정합이 조금 밀려도 측정 창이 패치
+#    밖으로 미끄러지지 않는다.
+#
+# 흑백 순서는 그대로다 - 바깥이 인쇄색(검정), 안쪽이 바탕색(흰색).
+
+CHROMA_V2_MARGIN_RAW = Rect(0.1590, 0.1700, 0.8410, 0.8520)
+"""측정면. 한 변 0.6820 정사각이며 가로로는 패드 중앙이다.
+
+세로로는 중앙이 아니다(중심 y 0.5112). 그래서 정사각형만으로 90도 모호성이
+완전히 사라지지는 않는다 - 대응이 90도 틀리면 역산 외곽이 약 0.016 패드만큼
+밀린다. 그 몫은 도안이 아니라 검출 쪽에서 없앤다: ``chroma.detect_pads_chroma``
+가 네 대응을 모두 시험해 테두리 띠가 규격에 가장 맞는 것을 고른다.
+"""
+
+_CHROMA_V2_ANCHOR = 0.0680
+_CHROMA_V2_ANCHOR_Y = 0.0786
+
+
+def _chroma_v2_anchor(x0: float) -> Rect:
+    a = _CHROMA_V2_ANCHOR
+    return Rect(x0, _CHROMA_V2_ANCHOR_Y, x0 + a, _CHROMA_V2_ANCHOR_Y + a)
+
+
+CHROMA_V2_ANCHOR_INK: tuple[Rect, ...] = (
+    _chroma_v2_anchor(0.1669),
+    _chroma_v2_anchor(0.7651),
+)
+"""인쇄색(검정)으로 찍힌 앵커. 좌우 쌍의 바깥쪽이다."""
+
+CHROMA_V2_ANCHOR_BASE: tuple[Rect, ...] = (
+    _chroma_v2_anchor(0.2469),
+    _chroma_v2_anchor(0.6851),
+)
+"""바탕색(흰색)으로 남겨 둔 앵커. 좌우 쌍의 안쪽이다."""
+
+CHROMA_V2 = PadSpec(
+    name="chroma_v2",
+    border_thickness=V3_BORDER,
+    corner_block_size=V3_BLOCK,
+    corner_block_offset=V3_BLOCK_OFFSET,
+    point_id_box=V3_POINT_ID_BOX,
+    line_group_x0=V3_LINE_X0,
+    line_group_x1=V3_LINE_X1,
+    # 선군을 인쇄하지 않는다. 위 x 범위는 남겨 두지만 단이 없으므로 아무 자리도
+    # 차지하지 않는다 - line_rects()/line_gap_rects() 가 빈 목록을 낸다.
+    line_bars=(),
+    margin_raw=CHROMA_V2_MARGIN_RAW,
+    anchor_white=CHROMA_V2_ANCHOR_BASE,
+    anchor_black=CHROMA_V2_ANCHOR_INK,
+    anchors_protected=True,
+)
+"""백색 바탕에 유채색 정사각 측정면. 현행 유채색 도안의 개정판이다."""
+
 SPECS: dict[str, PadSpec] = {
     LEGACY.name: LEGACY,
     V2.name: V2,
     V2_PROTECTED.name: V2_PROTECTED,
     V3.name: V3,
     V3_BLACK.name: V3_BLACK,
+    CHROMA_V2.name: CHROMA_V2,
 }
 
 
