@@ -44,7 +44,7 @@ def patch(img: np.ndarray, rect: spec.Rect, inset_px: int = 6) -> np.ndarray:
 
 
 def test_canvas_size(tone: str) -> None:
-    img = gray(spec.V2, tone)
+    img = gray(spec.SYNTH, tone)
     expected = PAD_PX + 2 * QUIET_PX
     assert img.shape == (expected, expected)
 
@@ -52,12 +52,12 @@ def test_canvas_size(tone: str) -> None:
 def test_quiet_zone_is_background(tone: str) -> None:
     """패드 바깥이 바탕톤인지. 검출기가 테두리 바깥 경계를 잡으려면 필요하다."""
     background, _ = tone_levels(tone)
-    img = gray(spec.V2, tone)
+    img = gray(spec.SYNTH, tone)
     assert img[: QUIET_PX - 2, :].min() == img[: QUIET_PX - 2, :].max() == background
 
 
 def test_border_thickness_matches_spec(tone: str) -> None:
-    img = gray(spec.V2, tone)
+    img = gray(spec.SYNTH, tone)
     mask = ink_mask(img, tone)
     center = mask[img.shape[0] // 2]
     idx = np.flatnonzero(np.diff(np.concatenate(([0], center.view(np.int8), [0]))))
@@ -70,9 +70,9 @@ def test_border_thickness_matches_spec(tone: str) -> None:
 
 
 def test_three_corner_blocks_drawn_br_empty(tone: str) -> None:
-    """v2 는 BR 이 완전히 비어야 한다 — 선군이 더 이상 침범하지 않으므로."""
-    mask = ink_mask(gray(spec.V2, tone), tone)
-    blocks = spec.V2.corner_blocks
+    """synth 는 BR 이 완전히 비어야 한다 — 선군이 더 이상 침범하지 않으므로."""
+    mask = ink_mask(gray(spec.SYNTH, tone), tone)
+    blocks = spec.SYNTH.corner_blocks
     for name in ("tl", "tr", "bl"):
         assert patch(mask, blocks[name]).mean() > 0.99, name
     assert patch(mask, blocks["br"]).mean() < 0.01
@@ -94,16 +94,16 @@ def test_anchors_have_absolute_levels(tone: str) -> None:
     2점 캘리브레이션 ``(I - I_black) / (I_white - I_black)`` 의 두 끝점이므로
     패드 톤에 따라 값이 흔들리면 안 된다.
     """
-    img = gray(spec.V2, tone)
-    for rect in spec.V2.anchor_white:
+    img = gray(spec.SYNTH, tone)
+    for rect in spec.SYNTH.anchor_white:
         assert patch(img, rect).min() == 255, "백색 앵커가 255 여야 한다"
-    for rect in spec.V2.anchor_black:
+    for rect in spec.SYNTH.anchor_black:
         assert patch(img, rect).max() == 0, "흑색 앵커가 0 이어야 한다"
 
 
 def test_anchors_do_not_overlap_other_elements() -> None:
     """앵커가 다른 인쇄 요소와 겹치지 않는지 (기하 검사)."""
-    s = spec.V2
+    s = spec.SYNTH
     others = [s.point_id_box, *s.corner_blocks.values()]
     others += [b.rect(s.line_group_x0, s.line_group_x1) for b in s.line_bars]
     for anchor in s.anchor_white + s.anchor_black:
@@ -119,7 +119,7 @@ def test_margin_is_clean_in_rendered_pad(tone: str) -> None:
     ``test_spec.py`` 는 샘플 PNG 로, 여기서는 생성기 출력으로 같은 것을 본다.
     """
     background, _ = tone_levels(tone)
-    for spec_obj in (spec.LEGACY, spec.V2):
+    for spec_obj in (spec.LEGACY, spec.SYNTH):
         img = gray(spec_obj, tone)
         region = patch(img, spec_obj.margin, inset_px=0)
         assert region.size > 0
@@ -130,18 +130,18 @@ def test_point_id_stays_inside_its_box(tone: str) -> None:
     """긴 ID 를 넣어도 박스를 넘지 않는지. 넘으면 여백을 오염시킨다."""
     background, _ = tone_levels(tone)
     for target in ("1", "1078", "999999"):
-        img = render_pad(spec.V2, tone, point_id=target, pad_px=PAD_PX, channels=1)
-        region = patch(img, spec.V2.margin, inset_px=0)
+        img = render_pad(spec.SYNTH, tone, point_id=target, pad_px=PAD_PX, channels=1)
+        region = patch(img, spec.SYNTH.margin, inset_px=0)
         assert region.min() == region.max() == background, target
 
 
 def test_render_is_deterministic() -> None:
     """같은 입력에 같은 출력. 모듈 무상태성 요건과 같은 성질이다."""
-    a = render_pad(spec.V2, "white", pad_px=400)
-    b = render_pad(spec.V2, "white", pad_px=400)
+    a = render_pad(spec.SYNTH, "white", pad_px=400)
+    b = render_pad(spec.SYNTH, "white", pad_px=400)
     assert np.array_equal(a, b)
 
 
 def test_invalid_tone_rejected() -> None:
     with pytest.raises(ValueError):
-        render_pad(spec.V2, "gray")
+        render_pad(spec.SYNTH, "gray")

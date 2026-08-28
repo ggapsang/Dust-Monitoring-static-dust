@@ -24,7 +24,7 @@ from padtools.synth import CaptureParams, Clump, expected_soiling, synthesize, v
 # 앵커가 보호된 규격을 기준으로 검증한다. 노출 앵커나 앵커 없는 규격은
 # 조도 기준이 잉크 하나뿐이라 블랙레벨을 소거하지 못하는데, 그 한계는
 # test_black_level_sensitivity_by_reference 가 따로 다룬다.
-SPEC_NAME = "v2_protected"
+SPEC_NAME = "synth_protected"
 SPEC = spec.SPECS[SPEC_NAME]
 
 BASE = CaptureParams(pad_fill=0.55, black_level=10, gain=0.95, noise_sigma=0.8, seed=11)

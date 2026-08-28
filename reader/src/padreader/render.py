@@ -92,7 +92,7 @@ def render_pad(
     Parameters
     ----------
     spec
-        패드 규격. ``spec.LEGACY`` 또는 ``spec.V2``.
+        패드 규격. ``spec.LEGACY`` 또는 ``spec.SYNTH``.
     tone
         ``white`` = 백색 바탕/흑색 인쇄, ``black`` = 그 반대.
     point_id

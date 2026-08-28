@@ -1,6 +1,6 @@
 """패드 도안 생성 CLI.
 
-    python -m padtools.generate_pad --tone white --spec v2 --out pad.png
+    python -m padtools.generate_pad --tone white --spec synth --out pad.png
 
 규격은 ``padreader.spec`` 이 단일 진실공급원이다. 여기서는 인자만 받는다.
 """
@@ -24,9 +24,9 @@ def main(argv: list[str] | None = None) -> int:
         help="white = 백색 바탕/흑색 인쇄 (흑색 분진 포인트용)",
     )
     parser.add_argument(
-        "--spec", choices=sorted(SPECS), default="v2",
-        help="legacy = 샘플 도안 그대로, v2 = 선군 단축 + 앵커 자리, "
-             "v2_protected = 앵커를 덮어 만든 패드용",
+        "--spec", choices=sorted(SPECS), default="synth",
+        help="legacy = 샘플 도안 그대로, synth = 선군 단축 + 앵커 자리, "
+             "synth_protected = 앵커를 덮어 만든 패드용",
     )
     parser.add_argument("--id", dest="point_id", default="1078", help="POINT_ID 숫자")
     parser.add_argument("--pad-px", type=int, default=1120, help="패드 외곽 한 변 픽셀")
@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "  주의: 이 규격의 앵커는 보호되지 않은 것으로 선언되어 있어 조도\n"
             "  정규화가 테두리 단일 기준으로 동작한다. 앵커를 라미네이트 등으로\n"
-            "  덮어 제작했다면 판독 시 spec 을 v2_protected 로 지정해야 한다.",
+            "  덮어 제작했다면 판독 시 spec 을 synth_protected 로 지정해야 한다.",
             file=sys.stderr,
         )
     return 0

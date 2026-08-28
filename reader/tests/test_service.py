@@ -20,7 +20,7 @@ fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
 from padservice.app import app  # noqa: E402
 
-SPEC_NAME = "v2_protected"
+SPEC_NAME = "synth_protected"
 SPEC = spec.SPECS[SPEC_NAME]
 BASE = CaptureParams(pad_fill=0.8, black_level=10, gain=0.95, noise_sigma=0.8, seed=5)
 """서비스 검증용 합성 촬영 조건.

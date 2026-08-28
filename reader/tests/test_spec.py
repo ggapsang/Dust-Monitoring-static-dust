@@ -123,7 +123,7 @@ def test_legacy_br_slot_is_polluted_by_line_group(mask: np.ndarray) -> None:
     바람에, 비어 있어야 할 BR 이 절반 넘게 차 있다. 회전 판정은 여전히
     되지만 마진이 절반으로 깎인다 — 실촬영 노이즈에서 회전이 뒤집힐 여지다.
 
-    도안이 고쳐지면 이 테스트가 실패하면서 알려준다. 그때는 v2 로 옮기면 된다.
+    도안이 고쳐지면 이 테스트가 실패하면서 알려준다. 그때는 synth 로 옮기면 된다.
     """
     filled = corner_fill(mask)
     assert 0.3 < filled["br"] < 0.7, f"BR 오염 정도가 달라졌다: {filled}"
@@ -134,9 +134,9 @@ def test_legacy_br_slot_is_polluted_by_line_group(mask: np.ndarray) -> None:
 
 
 def test_v2_line_group_clears_corner_slots() -> None:
-    """v2 는 선군이 모서리 블록 자리를 침범하지 않는다."""
-    assert spec.V2.line_group_clears_corner_slots
-    assert spec.V2.line_group_x1 < spec.V2.corner_blocks["br"].x0
+    """synth 는 선군이 모서리 블록 자리를 침범하지 않는다."""
+    assert spec.SYNTH.line_group_clears_corner_slots
+    assert spec.SYNTH.line_group_x1 < spec.SYNTH.corner_blocks["br"].x0
 
 
 def test_line_group_bars(mask: np.ndarray) -> None:
@@ -193,7 +193,7 @@ def test_margin_contains_no_print(mask: np.ndarray) -> None:
     )
 
 
-@pytest.mark.parametrize("spec_obj", [spec.LEGACY, spec.V2], ids=lambda s: s.name)
+@pytest.mark.parametrize("spec_obj", [spec.LEGACY, spec.SYNTH], ids=lambda s: s.name)
 def test_print_elements_do_not_enter_margin(spec_obj: spec.PadSpec) -> None:
     """인쇄 요소가 측정 여백을 침범하지 않는지 (기하 불변식).
 
@@ -210,7 +210,7 @@ def test_print_elements_do_not_enter_margin(spec_obj: spec.PadSpec) -> None:
         )
 
 
-@pytest.mark.parametrize("spec_obj", [spec.LEGACY, spec.V2], ids=lambda s: s.name)
+@pytest.mark.parametrize("spec_obj", [spec.LEGACY, spec.SYNTH], ids=lambda s: s.name)
 def test_print_elements_stay_inside_border(spec_obj: spec.PadSpec) -> None:
     """인쇄 요소가 테두리를 물지 않는지. 물면 조도 기준값이 오염된다."""
     inner = spec_obj.inner
@@ -237,12 +237,12 @@ def test_border_ring_rects_stay_inside_border(mask: np.ndarray) -> None:
 
 
 def test_anchor_rects_do_not_collide(mask: np.ndarray) -> None:
-    """v2 앵커 패치가 기존 인쇄물과 겹치지 않는지.
+    """synth 앵커 패치가 기존 인쇄물과 겹치지 않는지.
 
     앵커는 상단 밴드의 빈 공간에 들어가야 한다. legacy 도안에서 그 자리가
     실제로 비어 있음을 확인한다.
     """
-    for rect in spec.V2.anchor_white + spec.V2.anchor_black:
+    for rect in spec.SYNTH.anchor_white + spec.SYNTH.anchor_black:
         x0, y0, x1, y1 = (int(round(to_canvas(v))) for v in (rect.x0, rect.y0, rect.x1, rect.y1))
         patch = mask[y0:y1, x0:x1]
         assert patch.size > 0
@@ -254,7 +254,7 @@ def test_anchor_rects_are_mirror_symmetric() -> None:
 
     대칭이라야 가로 방향 조명 기울기가 쌍 평균에서 상쇄된다.
     """
-    for group in (spec.V2.anchor_white, spec.V2.anchor_black):
+    for group in (spec.SYNTH.anchor_white, spec.SYNTH.anchor_black):
         assert len(group) == 2
         left, right = sorted(group, key=lambda r: r.x0)
         assert abs(left.x0 - (1.0 - right.x1)) < 1e-9
@@ -262,12 +262,12 @@ def test_anchor_rects_are_mirror_symmetric() -> None:
 
 
 # ---------------------------------------------------------------------------
-# v3 — 실제로 인쇄해 현장에 붙인 도안
+# v2 — 실제로 인쇄해 현장에 붙인 도안
 #
-# 위의 검증은 전부 이 저장소 생성기가 그리는 legacy/v2 도안을 본다. 현장에
+# 위의 검증은 전부 이 저장소 생성기가 그리는 legacy/synth 도안을 본다. 현장에
 # 붙은 패드는 그 계보가 아니라 ``assets/make_pad_dual_tones.py`` 와 그 유채색
 # 변종이 그린 것이고, 두 계보의 좌표가 서로 달랐다. 그런데 그 어긋남을 아무도
-# 재지 않아, 판독기가 v2 좌표로 실물을 재면서 유채색 판독이 전부 실패했다 -
+# 재지 않아, 판독기가 synth 좌표로 실물을 재면서 유채색 판독이 전부 실패했다 -
 # 앵커 흑백이 반대라 정규화의 분모가 음수가 됐다. 여기서 막는다.
 # ---------------------------------------------------------------------------
 
@@ -308,9 +308,9 @@ def test_v3_anchor_rects_hit_the_right_shade(name: str) -> None:
     ``ANCHOR_SPAN_INVALID`` 로 떨어진다. 이름과 실물이 맞는지 여기서 잰다.
 
     마젠타 도안은 측정면만 유채색이고 앵커가 놓인 상단 밴드는 백색 패드와
-    같으므로 ``V3`` 를 쓴다.
+    같으므로 ``V2`` 를 쓴다.
     """
-    target = spec.V3_BLACK if name == "black" else spec.V3
+    target = spec.V2_BLACK if name == "black" else spec.V2
     for rect in target.anchor_white:
         assert v3_patch(V3_SAMPLES[name], rect).mean() > 200, f"흰 앵커 자리가 밝지 않다: {rect}"
     for rect in target.anchor_black:
@@ -319,7 +319,7 @@ def test_v3_anchor_rects_hit_the_right_shade(name: str) -> None:
 
 def test_v3_anchor_span_is_positive() -> None:
     """정규화의 분모가 양수인지. 위 검증의 결론을 판독기가 쓰는 형태로 다시 쓴 것이다."""
-    for name, target in (("white", spec.V3), ("black", spec.V3_BLACK), ("magenta", spec.V3)):
+    for name, target in (("white", spec.V2), ("black", spec.V2_BLACK), ("magenta", spec.V2)):
         white = np.mean([v3_patch(V3_SAMPLES[name], r).mean() for r in target.anchor_white])
         black = np.mean([v3_patch(V3_SAMPLES[name], r).mean() for r in target.anchor_black])
         assert white - black > 100, f"{name}: 앵커 대비가 {white - black:.1f} 밖에 안 된다"
@@ -337,7 +337,7 @@ def test_v3_margin_is_exactly_the_measurement_area() -> None:
     아래쪽은 흰 바탕이 아니라 선군이 곧바로 붙어 있다.
     """
     img, origin, pad = v3_frame(V3_SAMPLES["magenta"])
-    rect = spec.V3.margin_raw
+    rect = spec.V2.margin_raw
 
     field = img[origin : origin + pad, origin : origin + pad].astype(np.int16)
     mx = field.max(axis=2)
@@ -366,13 +366,13 @@ def test_v3_geometry_matches_the_printed_artwork() -> None:
 
     border = runs(ink)[0]
     assert border[0] == 0
-    assert abs(border[1] / pad - spec.V3.border_thickness) < TOL_PX / pad
+    assert abs(border[1] / pad - spec.V2.border_thickness) < TOL_PX / pad
 
 
 # ---------------------------------------------------------------------------
-# chroma_v3 — 유채색 도안 개정판
+# v3 — 유채색 도안 개정판
 #
-# v3 와 같은 방식으로 실물 PNG 를 다시 스캔한다. 규격과 도안이 어긋난 채로
+# v2 와 같은 방식으로 실물 PNG 를 다시 스캔한다. 규격과 도안이 어긋난 채로
 # 굴러가던 것이 유채색 판독을 통째로 실패시킨 적이 있어, 개정판도 같은 그물을
 # 씌운다.
 # ---------------------------------------------------------------------------
@@ -387,9 +387,9 @@ CHROMA_V3_SAMPLE = ASSETS / "pad_dual_tones" / "pad_1092_magenta_v3.png"
 
 def test_chroma_v3_anchor_rects_hit_the_right_shade() -> None:
     """``anchor_white`` 자리가 밝고 ``anchor_black`` 자리가 어두운지."""
-    for rect in spec.CHROMA_V3.anchor_white:
+    for rect in spec.V3.anchor_white:
         assert v3_patch(CHROMA_V3_SAMPLE, rect).mean() > 200, f"흰 앵커가 밝지 않다: {rect}"
-    for rect in spec.CHROMA_V3.anchor_black:
+    for rect in spec.V3.anchor_black:
         assert v3_patch(CHROMA_V3_SAMPLE, rect).mean() < 55, f"검은 앵커가 어둡지 않다: {rect}"
 
 
@@ -401,7 +401,7 @@ def test_chroma_v3_margin_is_square_and_matches_the_artwork() -> None:
     정사각형이어야 할 역산 외곽이 5.3:1 로 나온 사례가 있었다.
     """
     img, origin, pad = v3_frame(CHROMA_V3_SAMPLE)
-    rect = spec.CHROMA_V3.margin_raw
+    rect = spec.V3.margin_raw
 
     field = img[origin : origin + pad, origin : origin + pad].astype(np.int16)
     chroma = (field.max(axis=2) - field.min(axis=2)) > 40
@@ -431,15 +431,15 @@ def test_chroma_v3_leaves_white_gaps_beside_the_measurement_area() -> None:
     못 찾고, 좌우 두 변의 검증이 아예 성립하지 않았다.
     """
     img, origin, pad = v3_frame(CHROMA_V3_SAMPLE)
-    gap = spec.CHROMA_V3.margin_raw.x0 - spec.CHROMA_V3.border_thickness
-    assert gap > spec.CHROMA_V3.border_thickness, (
+    gap = spec.V3.margin_raw.x0 - spec.V3.border_thickness
+    assert gap > spec.V3.border_thickness, (
         f"좌우 흰 여백 {gap:.4f} 이 테두리 두께보다 좁다"
     )
 
     row = img[int(origin + 0.5 * pad), origin : origin + pad]
     band = row[
-        int((spec.CHROMA_V3.border_thickness + 0.01) * pad) : int(
-            (spec.CHROMA_V3.margin_raw.x0 - 0.01) * pad
+        int((spec.V3.border_thickness + 0.01) * pad) : int(
+            (spec.V3.margin_raw.x0 - 0.01) * pad
         )
     ]
     assert band.mean() > 200, "측정면 왼쪽이 흰 바탕이 아니다"
@@ -452,9 +452,9 @@ def test_chroma_v3_has_no_line_group() -> None:
     실물 사진에서 그 틈이 흐림으로 메워지면 테두리와 선군이 한 덩어리가 되어
     아래 변의 띠 두께가 규격의 1.7배로 잡힌다.
     """
-    assert spec.CHROMA_V3.line_bars == ()
-    assert spec.CHROMA_V3.line_rects == ()
-    assert spec.CHROMA_V3.line_gap_rects() == ()
+    assert spec.V3.line_bars == ()
+    assert spec.V3.line_rects == ()
+    assert spec.V3.line_gap_rects() == ()
 
     img, origin, pad = v3_frame(CHROMA_V3_SAMPLE)
     column = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[:, origin + pad // 2]
@@ -462,8 +462,8 @@ def test_chroma_v3_has_no_line_group() -> None:
 
     # 측정면 아래끝부터 테두리 안쪽까지가 전부 흰 바탕이어야 한다.
     below = inside[
-        int((spec.CHROMA_V3.margin_raw.y1 + 0.01) * pad) : int(
-            (1.0 - spec.CHROMA_V3.border_thickness - 0.005) * pad
+        int((spec.V3.margin_raw.y1 + 0.01) * pad) : int(
+            (1.0 - spec.V3.border_thickness - 0.005) * pad
         )
     ]
     assert below.min() > 200, f"측정면 아래에 인쇄물이 남아 있다 (최저 {below.min()})"

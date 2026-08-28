@@ -124,10 +124,10 @@ POINT_ID_BOX = Rect(
 LINE_GROUP_X0 = from_canvas(330)
 LINE_GROUP_X1 = from_canvas(1065)
 
-# v2 의 선군 오른쪽 끝. legacy 의 1065 는 BR 모서리 블록 자리(x 999..1072)를
+# synth 의 선군 오른쪽 끝. legacy 의 1065 는 BR 모서리 블록 자리(x 999..1072)를
 # 관통해 그 자리를 54% 채운다. BR 은 "비어 있어야 하는 모서리"이자 회전
 # 판정의 기준이므로, 선군이 거기까지 뻗으면 판정 마진이 절반으로 깎인다.
-# v2 에서는 블록 자리 앞에서 끊는다.
+# synth 에서는 블록 자리 앞에서 끊는다.
 LINE_GROUP_X1_V2 = from_canvas(960)
 LINE_BARS: tuple[LineBar, ...] = (
     LineBar(y0=from_canvas(940), thickness=canvas_length(4)),
@@ -158,7 +158,7 @@ MARGIN_INSET = canvas_length(9)
 # 에지 화소를 피한다.
 BORDER_RING_INSET = canvas_length(10)
 
-# 2톤 앵커 패치 (v2 도안 전용).
+# 2톤 앵커 패치 (synth 도안 전용).
 #
 # 2점 캘리브레이션 ``(I - I_black) / (I_white - I_black)`` 을 하려면 패드마다
 # 흑/백 앵커가 모두 있어야 한다. 테두리 하나만 쓰면 센서 블랙레벨 오프셋이
@@ -186,7 +186,7 @@ ANCHOR_BLACK_RECTS: tuple[Rect, ...] = (_anchor(305), _anchor(829))
 class PadSpec:
     """한 벌의 패드 규격.
 
-    ``legacy`` 는 ``assets/`` 의 샘플 도안 그대로이고, ``v2`` 는 여기에 2톤
+    ``legacy`` 는 ``assets/`` 의 샘플 도안 그대로이고, ``synth`` 는 여기에 2톤
     앵커 패치를 더한 것이다. 판독 파이프라인은 두 규격 모두에서 동작하며,
     앵커가 없으면 조도 정규화가 테두리 나눗셈으로 자동 강등된다.
     """
@@ -279,7 +279,7 @@ class PadSpec:
         """선군이 모서리 블록 자리를 침범하지 않는지.
 
         침범하면 비어 있어야 할 BR 자리가 선군으로 채워져 회전 판정
-        마진이 깎인다. legacy 도안이 이 상태이며 v2 에서 고쳤다.
+        마진이 깎인다. legacy 도안이 이 상태이며 synth 에서 고쳤다.
         """
         br = self.corner_blocks["br"]
         overlaps_x = self.line_group_x1 > br.x0 and self.line_group_x0 < br.x1
@@ -335,9 +335,9 @@ class PadSpec:
 LEGACY = PadSpec(name="legacy")
 """``assets/`` 의 샘플 도안 규격. 앵커 패치가 없다."""
 
-V2 = replace(
+SYNTH = replace(
     LEGACY,
-    name="v2",
+    name="synth",
     line_group_x1=LINE_GROUP_X1_V2,
     anchor_white=ANCHOR_WHITE_RECTS,
     anchor_black=ANCHOR_BLACK_RECTS,
@@ -351,10 +351,10 @@ V2 = replace(
 앵커는 자리만 잡아 둔 것이고 ``anchors_protected`` 는 꺼져 있다. 노출된
 앵커로 2점 캘리브레이션을 하면 신호가 상쇄되므로, 이 규격에서는 조도
 정규화가 테두리 단일 기준으로 동작한다. 물리적으로 앵커를 덮은 패드를
-만들면 ``V2_PROTECTED`` 를 쓴다.
+만들면 ``SYNTH_PROTECTED`` 를 쓴다.
 """
 
-V2_PROTECTED = replace(V2, name="v2_protected", anchors_protected=True)
+SYNTH_PROTECTED = replace(SYNTH, name="synth_protected", anchors_protected=True)
 """앵커를 라미네이트 등으로 덮어 분진이 앉지 않게 만든 패드용.
 
 이 조건에서만 2점 캘리브레이션이 성립한다. 앵커가 실제로 보호되어 있지
@@ -363,32 +363,32 @@ V2_PROTECTED = replace(V2, name="v2_protected", anchors_protected=True)
 """
 
 # --------------------------------------------------------------------------
-# v3 — 실제로 인쇄해 현장에 붙인 도안
+# v2 — 실제로 인쇄해 현장에 붙인 도안
 # --------------------------------------------------------------------------
 #
-# 위의 legacy/v2 는 이 저장소의 생성기(``padtools/generate_pad.py``)가 그리는
+# 위의 legacy/synth 는 이 저장소의 생성기(``padtools/generate_pad.py``)가 그리는
 # 도안이다. 현장에 붙은 패드는 그것이 아니라 ``assets/make_pad_dual_tones.py``
 # 와 그 유채색 변종 ``assets/make_pad_chroma.py`` 가 그린 것이고, 두 계보의
-# 좌표가 서로 다르다. 판독기가 v2 좌표로 실물을 재고 있었다.
+# 좌표가 서로 다르다. 판독기가 synth 좌표로 실물을 재고 있었다.
 #
 # 실물 도안 세 장(백/흑/마젠타)을 픽셀 스캔해 확인한 사실:
 #
 # - 기하는 세 장이 완전히 동일하다. 다른 것은 측정면 색뿐이다.
-# - 앵커는 **바깥이 인쇄색, 안쪽이 바탕색**이다. v2 는 정반대로(바깥이 백,
+# - 앵커는 **바깥이 인쇄색, 안쪽이 바탕색**이다. synth 는 정반대로(바깥이 백,
 #   안쪽이 흑) 알고 있어, 유채색 정규화의 분모 ``흰앵커 - 검은앵커`` 가
 #   음수가 되어 판독이 전부 실패했다.
-# - 측정면은 y 0.1750..0.8036 이다. v2 의 margin_raw 는 y0 이 0.1536 이라
+# - 측정면은 y 0.1750..0.8036 이다. synth 의 margin_raw 는 y0 이 0.1536 이라
 #   위쪽 2% 가 측정면 밖 흰 바탕을 문다.
 #
 # 아래 값은 ``make_pad_chroma.py`` 의 상수를 그대로 옮긴 것이고,
 # ``tests/test_spec.py`` 가 실제 PNG 를 다시 스캔해 어긋나면 잡는다.
 
-V3_BORDER = 0.0589
-V3_BLOCK = 0.0643
-V3_BLOCK_OFFSET = 0.0786
-V3_POINT_ID_BOX = Rect(0.3491, 0.0643, 0.6563, 0.1527)
+V2_BORDER = 0.0589
+V2_BLOCK = 0.0643
+V2_BLOCK_OFFSET = 0.0786
+V2_POINT_ID_BOX = Rect(0.3491, 0.0643, 0.6563, 0.1527)
 V3_MARGIN_RAW = Rect(0.0589, 0.1750, 0.9411, 0.8036)
-V3_LINE_X0, V3_LINE_X1 = 0.2589, 0.8400
+V2_LINE_X0, V2_LINE_X1 = 0.2589, 0.8400
 
 _V3_LINE_Y0 = 0.8036
 _V3_LINE_GAP = 0.0196
@@ -405,38 +405,38 @@ def _v3_line_bars() -> tuple[LineBar, ...]:
     return tuple(bars)
 
 
-_V3_ANCHOR = 0.0600
-_V3_ANCHOR_Y = 0.0786
+_V2_ANCHOR = 0.0600
+_V2_ANCHOR_Y = 0.0786
 
 
-def _v3_anchor(x0: float) -> Rect:
-    return Rect(x0, _V3_ANCHOR_Y, x0 + _V3_ANCHOR, _V3_ANCHOR_Y + _V3_ANCHOR)
+def _v2_anchor(x0: float) -> Rect:
+    return Rect(x0, _V2_ANCHOR_Y, x0 + _V2_ANCHOR, _V2_ANCHOR_Y + _V2_ANCHOR)
 
 
-V3_ANCHOR_INK: tuple[Rect, ...] = (_v3_anchor(0.1731), _v3_anchor(0.7723))
+V2_ANCHOR_INK: tuple[Rect, ...] = (_v2_anchor(0.1731), _v2_anchor(0.7723))
 """인쇄색으로 찍힌 앵커. 좌우 쌍의 **바깥쪽**이다."""
 
-V3_ANCHOR_BASE: tuple[Rect, ...] = (_v3_anchor(0.2451), _v3_anchor(0.7003))
+V2_ANCHOR_BASE: tuple[Rect, ...] = (_v2_anchor(0.2451), _v2_anchor(0.7003))
 """바탕색으로 남겨 둔 앵커. 좌우 쌍의 **안쪽**이다."""
 
-_V3 = PadSpec(
+_V2 = PadSpec(
     name="_v3",
-    border_thickness=V3_BORDER,
-    corner_block_size=V3_BLOCK,
-    corner_block_offset=V3_BLOCK_OFFSET,
-    point_id_box=V3_POINT_ID_BOX,
-    line_group_x0=V3_LINE_X0,
-    line_group_x1=V3_LINE_X1,
+    border_thickness=V2_BORDER,
+    corner_block_size=V2_BLOCK,
+    corner_block_offset=V2_BLOCK_OFFSET,
+    point_id_box=V2_POINT_ID_BOX,
+    line_group_x0=V2_LINE_X0,
+    line_group_x1=V2_LINE_X1,
     line_bars=_v3_line_bars(),
     margin_raw=V3_MARGIN_RAW,
     anchors_protected=True,
 )
 
-V3 = replace(
-    _V3,
-    name="v3",
-    anchor_white=V3_ANCHOR_BASE,
-    anchor_black=V3_ANCHOR_INK,
+V2 = replace(
+    _V2,
+    name="v2",
+    anchor_white=V2_ANCHOR_BASE,
+    anchor_black=V2_ANCHOR_INK,
 )
 """백색 바탕 실물 도안. **유채색(마젠타) 패드도 이것을 쓴다.**
 
@@ -449,13 +449,13 @@ V3 = replace(
 인쇄라, 앵커 관점에서는 백색 패드와 완전히 같다.
 """
 
-V3_BLACK = replace(
-    _V3,
-    name="v3_black",
-    anchor_white=V3_ANCHOR_INK,
-    anchor_black=V3_ANCHOR_BASE,
+V2_BLACK = replace(
+    _V2,
+    name="v2_black",
+    anchor_white=V2_ANCHOR_INK,
+    anchor_black=V2_ANCHOR_BASE,
 )
-"""흑색 바탕 실물 도안. 기하는 ``V3`` 와 같고 앵커의 명암만 뒤집힌다.
+"""흑색 바탕 실물 도안. 기하는 ``V2`` 와 같고 앵커의 명암만 뒤집힌다.
 
 흑색 바탕은 인쇄색이 흰색이므로 바깥(인쇄색)이 흰 앵커, 안쪽(바탕색)이
 검은 앵커다. 같은 자리를 가리키면서 이름만 맞바꾼 것이며, 이 구분을 두지
@@ -463,10 +463,10 @@ V3_BLACK = replace(
 """
 
 # --------------------------------------------------------------------------
-# chroma_v3 — 유채색 도안 개정판 (assets/make_pad_chroma_v3.py)
+# v3 — 유채색 도안 개정판 (assets/make_pad_chroma_v3.py)
 # --------------------------------------------------------------------------
 #
-# ``V3`` 는 그대로 둔다. 현장에 붙어 있는 패드와 이미 찍어 둔 기준 사진이 그
+# ``V2`` 는 그대로 둔다. 현장에 붙어 있는 패드와 이미 찍어 둔 기준 사진이 그
 # 도안이라, 덮어쓰면 지난 판독을 다시 읽을 수 없다. 실물을 교체하면
 # ``chroma.spec`` 을 이 규격으로 바꾼다.
 #
@@ -488,7 +488,7 @@ V3_BLACK = replace(
 #
 # 흑백 순서는 그대로다 - 바깥이 인쇄색(검정), 안쪽이 바탕색(흰색).
 
-CHROMA_V3_MARGIN_RAW = Rect(0.1550, 0.1700, 0.8450, 0.8600)
+V3_MARGIN_RAW = Rect(0.1550, 0.1700, 0.8450, 0.8600)
 """측정면. 한 변 0.6900 정사각이며 가로로는 패드 중앙이다.
 
 선군을 걷어내 아래로 여유가 생겼지만 한 변이 그만큼 늘지는 않았다. 측정면이
@@ -503,56 +503,59 @@ CHROMA_V3_MARGIN_RAW = Rect(0.1550, 0.1700, 0.8450, 0.8600)
 180도는 모서리 블록으로 가른다.
 """
 
-_CHROMA_V3_ANCHOR = 0.0680
-_CHROMA_V3_ANCHOR_Y = 0.0786
+_V3_ANCHOR = 0.0680
+_V3_ANCHOR_Y = 0.0786
 
 
-def _chroma_v3_anchor(x0: float) -> Rect:
-    a = _CHROMA_V3_ANCHOR
-    return Rect(x0, _CHROMA_V3_ANCHOR_Y, x0 + a, _CHROMA_V3_ANCHOR_Y + a)
+def _v3_anchor(x0: float) -> Rect:
+    a = _V3_ANCHOR
+    return Rect(x0, _V3_ANCHOR_Y, x0 + a, _V3_ANCHOR_Y + a)
 
 
-CHROMA_V3_ANCHOR_INK: tuple[Rect, ...] = (
-    _chroma_v3_anchor(0.1669),
-    _chroma_v3_anchor(0.7651),
+V3_ANCHOR_INK: tuple[Rect, ...] = (
+    _v3_anchor(0.1669),
+    _v3_anchor(0.7651),
 )
 """인쇄색(검정)으로 찍힌 앵커. 좌우 쌍의 바깥쪽이다."""
 
-CHROMA_V3_ANCHOR_BASE: tuple[Rect, ...] = (
-    _chroma_v3_anchor(0.2469),
-    _chroma_v3_anchor(0.6851),
+V3_ANCHOR_BASE: tuple[Rect, ...] = (
+    _v3_anchor(0.2469),
+    _v3_anchor(0.6851),
 )
 """바탕색(흰색)으로 남겨 둔 앵커. 좌우 쌍의 안쪽이다."""
 
-CHROMA_V3 = PadSpec(
-    name="chroma_v3",
-    border_thickness=V3_BORDER,
-    corner_block_size=V3_BLOCK,
-    corner_block_offset=V3_BLOCK_OFFSET,
-    point_id_box=V3_POINT_ID_BOX,
-    line_group_x0=V3_LINE_X0,
-    line_group_x1=V3_LINE_X1,
+V3 = PadSpec(
+    name="v3",
+    border_thickness=V2_BORDER,
+    corner_block_size=V2_BLOCK,
+    corner_block_offset=V2_BLOCK_OFFSET,
+    point_id_box=V2_POINT_ID_BOX,
+    line_group_x0=V2_LINE_X0,
+    line_group_x1=V2_LINE_X1,
     # 선군을 인쇄하지 않는다. 위 x 범위는 남겨 두지만 단이 없으므로 아무 자리도
     # 차지하지 않는다 - line_rects()/line_gap_rects() 가 빈 목록을 낸다.
     line_bars=(),
-    margin_raw=CHROMA_V3_MARGIN_RAW,
-    anchor_white=CHROMA_V3_ANCHOR_BASE,
-    anchor_black=CHROMA_V3_ANCHOR_INK,
+    margin_raw=V3_MARGIN_RAW,
+    anchor_white=V3_ANCHOR_BASE,
+    anchor_black=V3_ANCHOR_INK,
     anchors_protected=True,
 )
 """백색 바탕에 유채색 정사각 측정면. 현행 유채색 도안의 개정판이다.
 
-``assets/make_pad_chroma_v3.py`` 가 그리는 도안이다. 중간판(v2)은 선군을 남긴
-채 한 변이 0.6820 이었고, 이 판에서 선군을 걷어내며 0.6900 으로 키웠다.
+``assets/make_pad_chroma_v3.py`` 가 그리는 도안이다. 도안 파일 이름의 v2/v3 는
+**도안 판번호**이고 여기 규격 이름과는 다른 축이다 - 도안 중간판
+(``make_pad_chroma_v2.py``)은 선군을 남긴 채 측정면 한 변이 0.6820 이었고,
+이 판에서 선군을 걷어내며 0.6900 으로 키웠다. 규격에는 실제로 인쇄해 붙일
+최종판만 들인다.
 """
 
 SPECS: dict[str, PadSpec] = {
     LEGACY.name: LEGACY,
+    SYNTH.name: SYNTH,
+    SYNTH_PROTECTED.name: SYNTH_PROTECTED,
     V2.name: V2,
-    V2_PROTECTED.name: V2_PROTECTED,
+    V2_BLACK.name: V2_BLACK,
     V3.name: V3,
-    V3_BLACK.name: V3_BLACK,
-    CHROMA_V3.name: CHROMA_V3,
 }
 
 

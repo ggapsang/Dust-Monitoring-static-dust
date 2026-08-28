@@ -66,7 +66,7 @@ def _sweeps(base: CaptureParams) -> list[tuple[str, CaptureParams]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="합성 검증 이미지 생성")
     parser.add_argument("--tone", choices=("white", "black"), required=True)
-    parser.add_argument("--spec", choices=sorted(SPECS), default="v2_protected")
+    parser.add_argument("--spec", choices=sorted(SPECS), default="synth_protected")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--id", dest="point_id", default="1078")
     parser.add_argument("--seed", type=int, default=7)

@@ -194,7 +194,7 @@ point.tone in ("white","black") → mode="auto" (잉크 링 검출, 사후 판�
 
 mono 의 조도 정규화(`normalize.py`, 테두리 밝기로 나눗셈)는 그레이스케일
 1채널이라 magenta 의 색 정보를 보존하지 못한다. 대신 도안에 인쇄된 **2톤
-앵커 패치**(흑/백, `spec.V2_PROTECTED.anchor_white`/`anchor_black`)로
+앵커 패치**(흑/백, `spec.SYNTH_PROTECTED.anchor_white`/`anchor_black`)로
 R·G·B 채널을 각각 2점 캘리브레이션한다.
 
 ```
@@ -204,7 +204,7 @@ reflectance = (observed - black_median) / (white_median - black_median)   # 채�
 `I = g·E·ρ + B₀` 모델에서 오프셋 `B₀`와 게인·조명 `g·E`가 함께 소거된다 —
 mono 의 테두리 단독 나눗셈은 `B₀`가 안 지워지고 저반사면(검은 잉크)일수록
 그 비중이 커지는 한계가 있는데, 이 방식은 그 한계가 없다. 앵커 좌표는
-`cfg.spec` 설정과 무관하게 `V2_PROTECTED` 고정값을 쓴다 — 유채색 패드의
+`cfg.spec` 설정과 무관하게 `SYNTH_PROTECTED` 고정값을 쓴다 — 유채색 패드의
 물리적 앵커 위치는 도안 자체의 고정 사실이라 흑백 규격 설정을 따라가면
 안 된다.
 
