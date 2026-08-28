@@ -328,13 +328,44 @@ async def process_capture(
             )
             pads = outcome.payload.get("pads") or []
             saved: list[Reading] = []
+            unattributed: list[str] = []
             for index, pad in enumerate(pads):
+                # 어느 개소에도 붙지 않는 패드는 판독 행으로 남기지 않는다.
+                #
+                # 한 사진에는 종류가 다른 패드가 같이 찍힌다. 무채색 작업이
+                # 유채색 패드까지 찾아내도 그쪽 후보에는 그 번호가 없어 배정되지
+                # 않는데(유채색 작업이 따로 맡는다), 그것을 개소 없는 행으로
+                # 저장하면 결과 표에 번호 빈 줄이 사진마다 하나씩 쌓인다.
+                # 무엇을 봤는지는 노트에 남기므로 정보가 사라지지는 않는다.
+                if pad.get("point_id") is None and len(job.baselines) != 1:
+                    unattributed.append(str(pad.get("point_id_raw") or "읽지 못함"))
+                    continue
                 frames = outcome.images[index] if index < len(outcome.images) else {}
                 saved.append(
                     store_reading(
                         session, root, run_id, job, index, pad, outcome.payload, frames
                     )
                 )
+            if unattributed:
+                run = session.get(Run, run_id)
+                if run is not None:
+                    append_notes(
+                        run,
+                        [
+                            {
+                                "kind": "unassigned_pad",
+                                "capture_id": job.capture.id,
+                                "original_name": job.capture.original_name,
+                                "tone": job.tone,
+                                "message": (
+                                    "이 작업의 개소에 배정되지 않은 패드 "
+                                    f"{len(unattributed)}개 (읽은 번호 "
+                                    f"{', '.join(unattributed)}). 다른 종류의 "
+                                    "패드가 같이 찍힌 것이라면 정상이다."
+                                ),
+                            }
+                        ],
+                    )
             if not pads:
                 run = session.get(Run, run_id)
                 if run is not None:

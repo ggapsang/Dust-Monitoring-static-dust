@@ -114,7 +114,7 @@ def test_chroma_uses_its_own_spec() -> None:
     """
     cfg = load_config()
     assert cfg.chroma.spec != cfg.spec
-    assert cfg.chroma.spec in ("v2", "v2_black")
+    assert cfg.chroma.spec in ("v2", "v2_black", "v3")
 
 
 def test_chroma_saturation_thresholds_are_separate() -> None:

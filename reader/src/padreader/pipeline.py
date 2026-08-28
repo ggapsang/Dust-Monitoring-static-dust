@@ -22,7 +22,7 @@ AMR 의 촬영 위치와 각도가 포인트마다 고정되어 있으므로 두
 from __future__ import annotations
 
 import time
-from itertools import permutations
+from itertools import combinations, permutations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -207,10 +207,10 @@ def _analyze(
     anchor_contrast: float | None = None
     anchor_clipped_ratio: float | None = None
 
-    def calibrate() -> None:
+    def calibrate(anchor_spec: PadSpec) -> None:
         nonlocal chroma_reflectance, chroma_failure, chroma_anchor_values
         nonlocal anchor_contrast, anchor_clipped_ratio
-        norm = channel_normalize(rectified_bgr, size, spec)
+        norm = channel_normalize(rectified_bgr, size, anchor_spec)
         # 실패해도 앵커 실측값은 남긴다. 사유 이름만으로는 좌표가 어긋난
         # 것인지 사진이 나쁜 것인지 밖에서 가릴 수 없다.
         chroma_reflectance = norm.reflectance
@@ -223,13 +223,16 @@ def _analyze(
         # 색으로 직접 찾은 것이니 이미 유채색이라는 게 확정이다 - 다시
         # 판별할 필요 없이 바로 채널 정규화로 간다.
         pad_type = "chroma"
-        calibrate()
+        calibrate(spec)
     elif mode != "legacy":
         pad_type, _saturation = classify_pad_type(
             rectified_bgr, spec, size, cfg.chroma.saturation_threshold
         )
         if pad_type == "chroma":
-            calibrate()
+            # 여기까지 온 ``spec`` 은 무채색 규격이다. 앵커는 유채색 도안에만
+            # 있으므로 그쪽 규격으로 잰다 - 무채색 규격에는 앵커 자리가 아예
+            # 없어서, 그대로 넘기면 정규화가 성립할 수 없다.
+            calibrate(get_spec(cfg.chroma.spec))
 
     normalization = normalize(rectified_gray, spec, cfg.normalize, size)
     if normalization is None:
@@ -307,34 +310,86 @@ def assign_ids(
     후보 중 가장 나은 것이라도 ``assign_min_score`` 에 못 미치면 배정하지
     않는다. 엉뚱한 자리에 붙인 패드나 오검출된 사각형이 조용히 어느 개소로
     배정되는 것이 실패보다 나쁘다.
+
+    **배정되지 못한 패드는 번호를 잃는다.** 후보를 받았다는 것은 "이 사진에
+    있을 개소는 이것뿐" 이라는 선언이므로, 그 안에 들지 못한 패드에 열린 판독
+    값을 남겨 두면 약속이 깨진다. 읽은 값은 ``point_id_raw`` 에 그대로 남으니
+    무엇을 봤는지는 잃지 않는다.
     """
     if not readings or not candidates:
         return
 
     floor = cfg.assign_min_score
     table = [[match_score(r.glyphs, c, cfg) for c in candidates] for r in readings]
-
-    best_total = None
-    best_plan: tuple[int | None, ...] = ()
-    width = min(len(readings), len(candidates))
-    for picked in permutations(range(len(candidates)), width):
-        plan: list[int | None] = list(picked) + [None] * (len(readings) - width)
-        total = sum(
-            table[i][j] for i, j in enumerate(plan) if j is not None
-        )
-        if best_total is None or total > best_total:
-            best_total, best_plan = total, tuple(plan)
+    chosen = _best_matching(table, len(readings), len(candidates))
 
     # 자리 번호로 찾는다. dataclass 를 값으로 비교하면 안에 든 이미지 배열까지
     # 견주게 되어 터진다.
-    for index, choice in enumerate(best_plan):
-        if choice is None:
+    for index in range(len(readings)):
+        choice = chosen.get(index)
+        score = None if choice is None else table[index][choice]
+        if choice is not None and (floor is None or score >= floor):
+            readings[index].point_id = candidates[choice]
+            readings[index].point_id_confidence = score
             continue
-        score = table[index][choice]
-        if floor is not None and score < floor:
-            continue
-        readings[index].point_id = candidates[choice]
-        readings[index].point_id_confidence = score
+        # 후보를 받았는데 배정되지 못했으면 **번호를 지운다.** 열린 판독으로
+        # 읽은 값을 그대로 두면 닫힌 판독의 약속이 깨진다 - 후보에 없는 번호가
+        # 나오고, 배정된 패드와 같은 번호가 되어 한 개소에 결과가 두 줄 생긴다.
+        # 실촬영에서 마젠타 패드가 "1083" 을 배정받고, 진짜 1083 이 열린 판독
+        # 값을 그대로 들고 남아 같은 개소에 성공 한 줄과 실패 한 줄이 동시에
+        # 올라왔다. 읽은 값 자체는 ``point_id_raw`` 에 남는다.
+        readings[index].point_id = None
+        readings[index].point_id_confidence = None
+
+
+MATCHING_LIMIT = 7
+"""완전 탐색으로 짝지을 최대 개수. 넘으면 탐욕적으로 고른다.
+
+한 화면의 패드도 후보도 실제로는 서너 개라 완전 탐색이 맞다. 다만 개수가
+늘면 경우의 수가 계승으로 커지므로 안전판을 둔다.
+"""
+
+
+def _best_matching(
+    table: list[list[float]], n_readings: int, n_candidates: int
+) -> dict[int, int]:
+    """점수 합이 가장 큰 짝짓기. {패드 자리: 후보 자리}.
+
+    **어느 패드를 빼고 짝지을지도 함께 고른다.** 예전에는 후보 순열만 훑고
+    남는 자리에 ``None`` 을 뒤에 붙였는데, 그러면 목록 뒤쪽 패드만 배정에서
+    빠질 수 있었다. 검출은 면적 큰 순이라, 크게 찍힌 오검출이나 다른 종류의
+    패드가 앞자리를 차지하면 진짜 패드가 밀려난다 - 실촬영에서 마젠타 패드가
+    무채색 개소 번호를 가져갔다.
+    """
+    width = min(n_readings, n_candidates)
+    if width == 0:
+        return {}
+
+    if max(n_readings, n_candidates) > MATCHING_LIMIT:
+        # 점수 높은 짝부터 서로 겹치지 않게 채운다. 최적은 아니지만 개수가
+        # 이만큼 많으면 완전 탐색이 현실적이지 않다.
+        pairs = sorted(
+            ((table[r][c], r, c) for r in range(n_readings) for c in range(n_candidates)),
+            reverse=True,
+        )
+        taken_r: set[int] = set()
+        taken_c: set[int] = set()
+        out: dict[int, int] = {}
+        for _, r, c in pairs:
+            if r not in taken_r and c not in taken_c:
+                out[r] = c
+                taken_r.add(r)
+                taken_c.add(c)
+        return out
+
+    best_total: float | None = None
+    best: dict[int, int] = {}
+    for rows in combinations(range(n_readings), width):
+        for cols in permutations(range(n_candidates), width):
+            total = sum(table[r][c] for r, c in zip(rows, cols))
+            if best_total is None or total > best_total:
+                best_total, best = total, dict(zip(rows, cols))
+    return best
 
 
 def read_pads(

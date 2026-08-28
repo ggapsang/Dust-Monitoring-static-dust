@@ -60,7 +60,13 @@ HUE_TOLERANCE_DEG = 40.0
 간판 등)까지 걸린다 - 실촬영에서 실제로 걸렸다(사무실 파티션의 채도 높은
 주황색 원단). 색상각까지 같이 보면 걸러진다. 여유폭은 카메라 화이트밸런스·
 조명 색온도가 색상각을 어느 정도 돌릴 수 있다는 점을 감안해 넉넉히 뒀다 -
-40도면 순수 주황(약 30도)과는 264도 이상 떨어져 있어 여전히 걸러진다."""
+40도면 순수 주황(약 30도)과는 64도 떨어져 있어 여전히 걸러진다.
+
+실촬영 실측(1089 기준 사진): 패드 354도, 뒤에 깔린 주황 파티션 28도. 기준값
+324도에서 패드는 30도, 파티션은 64도 떨어져 있어 이 폭 안에 패드만 남는다.
+인쇄값(324도)과 실촬영값(354도)이 30도 차이 나는 것은 카메라 화이트밸런스
+때문이며, 여유폭을 넉넉히 둔 이유가 이것이다. 다만 남는 여유가 10도뿐이라
+조명이 더 붉게 돌면 이 값을 다시 봐야 한다."""
 
 
 def _mean_hue_deg(bgr_pixels: np.ndarray) -> float:
@@ -126,7 +132,23 @@ def detect_pads_chroma(
     mx = np.maximum(np.maximum(r, g), b)
     mn = np.minimum(np.minimum(r, g), b)
     saturation = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0.0)
-    mask = (saturation > saturation_threshold).astype(np.uint8) * 255
+
+    # 채도만으로 마스크를 만들면 **패드가 배경에 흡수된다.** 채도 높은 물체
+    # 위에 패드가 붙어 있으면 둘이 이어져 하나의 덩어리가 되고, 그 덩어리는
+    # 배경 쪽이 훨씬 넓어 색상각도 배경 색으로 나온다 - 뒤에서 윤곽마다
+    # 색상각을 봐도 이미 늦다. 실측: 채도 높은 주황 파티션에 붙은 패드가
+    # 화면의 49% 를 차지하는 한 덩어리로 뭉쳐 검출이 0 건이 됐다.
+    #
+    # 그래서 색상각을 **화소 단위로** 먼저 건다. 같은 사진에서 파티션은 28도,
+    # 패드는 354도로 갈라져 있어 마스크 단계에서 배경이 통째로 빠진다
+    # (임계 넘는 화소가 57.5% 에서 1.4% 로 준다).
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    hue = hsv[..., 0].astype(np.float64) * 2.0  # OpenCV H 는 0-179
+    hue_gap = np.abs(hue - MAGENTA_HUE_DEG)
+    hue_distance = np.minimum(hue_gap, 360.0 - hue_gap)
+    mask = (
+        (saturation > saturation_threshold) & (hue_distance <= HUE_TOLERANCE_DEG)
+    ).astype(np.uint8) * 255
 
     # 렌즈 색수차 등 가는 잡음을 지운다. 커널을 사진 짧은 변 대비 비율로
     # 잡아 해상도에 무관하게 만든다 - detect.py 의 local_block_ratio 와
@@ -262,50 +284,54 @@ def _best_pad_corners(
     - ``cv2.imread`` 는 EXIF 회전을 반영하지 않으므로, 가로로 든 카메라로 찍어도
     원시 배열은 세로다.
 
-    **두 가지를 따로 본다. 하나로는 못 가린다.**
+    **두 축을 따로 가른다. 서로 다른 질문이기 때문이다.**
 
-    *90도 축* 은 테두리 잉크 띠로 가른다. 측정면이 정사각형이 아니면 90도 틀린
-    대응이 외곽을 통째로 일그러뜨려(실측 5.3:1) 띠 두께가 규격에서 크게 벗어난다.
+    *90도 축* (0/2 대 1/3) 은 테두리 잉크 띠로 가른다. 90도 틀린 대응은 외곽을
+    통째로 일그러뜨려 띠 두께가 규격에서 벗어난다.
 
-    *180도 축* 은 띠로 가릴 수 없다. 반 바퀴 돌려도 네 변의 띠 두께가 그대로라,
-    띠만 보고 고르면 잡음으로 고르게 된다 - 실측에서 0.0277 과 0.0394 를 견주어
-    **틀린 쪽**을 골랐고 앵커 대비가 +46.5 에서 -2.7 로 뒤집혔다. 측정면이 패드
-    안에서 세로로 중앙이 아니라(0.5 가 아니라 0.5112), 180도가 틀리면 역산 외곽이
-    약 0.021 패드(1120 기준 24px)만큼 밀려 앵커 창이 패치를 벗어난다.
+    *180도 축* (0 대 2) 은 띠로 가릴 수 없다. 반 바퀴 돌려도 사각형이 같아
+    띠 두께가 **완전히 동일하게** 나온다 - 실측에서 두 대응의 값이 소수점 다섯
+    자리까지 같았다. 그걸로 고르면 사실상 목록 순서로 고르는 것이고, 실제로
+    틀린 쪽을 집어 앵커 대비가 +85.3 이어야 할 자리에서 -1.0 이 나왔다.
 
-    그래서 180도는 **모서리 블록**으로 가른다. 비어 있는 모서리가 규격 자리에
-    오는 대응이 곧 실제 패드 방향과 맞는 대응이다(``orient.determine_orientation``
-    이 이미 하는 판정을 그대로 쓴다). 그 대응을 고르면 뒤따르는 회전 보정이 할
-    일이 없어져 외곽이 밀리지 않는다.
+    이쪽은 **모서리 블록**이 가른다. 비어 있는 모서리가 규격 자리(BR)에 오는
+    대응이 실제 패드 방향과 맞는 것이고, 그 판정이 얼마나 또렷한지가 곧
+    ``orient`` 의 마진이다. 위 실측에서 마진이 0.261 대 1.500 으로 확연히
+    갈렸다. 판정이 맞은 대응을 먼저 보고, 그중 마진이 가장 큰 것을 고른다.
 
-    둘 다 못 가리면 종횡비로 고른다. 측정면이 좌우 테두리에 붙어 있는 도안
-    (개정 전)은 어둡게 찍히면 잉크와 측정면이 이어져 띠가 끝나는 자리를 못 찾는데,
-    그때 회전 0 으로 주저앉으면 종횡비만으로도 가릴 수 있었을 것을 놓친다.
+    띠를 하나도 못 재면 종횡비로 축을 고른다. 측정면이 좌우 테두리에 붙어 있는
+    도안(개정 전)은 어둡게 찍히면 잉크와 측정면이 이어져 띠가 끝나는 자리를 못
+    찾는다.
     """
-    turns: list[tuple[np.ndarray, float | None, bool, float]] = []
-    for turn in range(4):
-        corners = _pad_corners_from_margin(np.roll(quad, -turn, axis=0), spec.margin_raw)
-        # 유채색 패드의 바탕 밴드는 백색이고 인쇄는 검정이라 극성이 white 와 같다.
-        error = border_fit_error(gray, corners, "white", spec.border_thickness)
-        preview, _ = rectify(gray, corners, TURN_PROBE_PX)
+    corners = [
+        _pad_corners_from_margin(np.roll(quad, -turn, axis=0), spec.margin_raw)
+        for turn in range(4)
+    ]
+    # 유채색 패드의 바탕 밴드는 백색이고 인쇄는 검정이라 극성이 white 와 같다.
+    errors = [border_fit_error(gray, c, "white", spec.border_thickness) for c in corners]
+
+    def axis_error(axis: tuple[int, int]) -> float | None:
+        measured = [errors[t] for t in axis if errors[t] is not None]
+        return min(measured) if measured else None
+
+    axes = ((0, 2), (1, 3))
+    scored = [(axis_error(a), a) for a in axes]
+    usable = [(e, a) for e, a in scored if e is not None]
+    if usable:
+        axis = min(usable, key=lambda item: item[0])[1]
+    else:
+        # 띠를 못 재는 도안. 측정면 종횡비가 규격과 맞는 쪽을 고른다.
+        axis = axes[_aspect_turn(quad, spec.margin_raw)]
+
+    judged = []
+    for turn in axis:
+        preview, _ = rectify(gray, corners[turn], TURN_PROBE_PX)
         orientation = determine_orientation(preview, spec, "white", TURN_PROBE_PX)
-        turns.append(
-            (corners, error, orientation.rotation_index == 0, orientation.margin)
-        )
+        judged.append((orientation.rotation_index == 0, orientation.margin, turn))
 
-    # 방향이 맞는 대응부터 본다. 그중 띠가 규격에 가장 맞는 것, 띠를 못 재면
-    # 회전 판정이 가장 또렷한 것.
-    upright = [t for t in turns if t[2]]
-    if upright:
-        measured = [t for t in upright if t[1] is not None]
-        if measured:
-            return min(measured, key=lambda t: t[1])[0]
-        return max(upright, key=lambda t: t[3])[0]
-
-    measured = [t for t in turns if t[1] is not None]
-    if measured:
-        return min(measured, key=lambda t: t[1])[0]
-    return turns[_aspect_turn(quad, spec.margin_raw)][0]
+    upright = [j for j in judged if j[0]]
+    pool = upright or judged
+    return corners[max(pool, key=lambda j: j[1])[2]]
 
 
 def _pad_corners_from_margin(margin_corners_photo: np.ndarray, margin_rect: Rect) -> np.ndarray:
@@ -378,6 +404,19 @@ def channel_normalize(
     **실패해도 앵커 실측값과 대비는 채워서 돌려준다.** 판정만 돌려주면 왜
     실패했는지 밖에서 알 방법이 없다.
     """
+    if not spec.has_anchors:
+        # 앵커 자리가 없는 규격으로는 2점 캘리브레이션이 성립하지 않는다.
+        # 여기서 막지 않으면 빈 목록을 이어붙이려다 예외가 나고, 그 예외는
+        # 패드 하나가 아니라 **사진 한 장을 통째로** 날린다 - 실제로 그렇게
+        # 13시 촬영분 다섯 장의 무채색 판독이 전부 사라졌다.
+        return ChannelNormalization(
+            reflectance=None,
+            anchor_values={},
+            anchor_clipped_ratio=0.0,
+            anchor_contrast=0.0,
+            failure=FailureReason.ANCHOR_SPAN_INVALID,
+        )
+
     height, width = rectified_bgr.shape[:2]
 
     def sample(rects) -> np.ndarray:

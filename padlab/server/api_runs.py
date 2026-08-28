@@ -169,13 +169,25 @@ async def rerun_run(
     if source is None:
         raise HTTPException(404, f"없는 실행이다: {run_id}")
 
-    capture_ids = list(
+    # 판독 행뿐 아니라 **실행 노트에 남은 사진까지** 대상에 넣는다.
+    #
+    # 판독이 통째로 실패한 사진은 행이 하나도 안 생기고 노트에만 남는다. 행만
+    # 보고 대상을 고르면 그런 사진이 재판독에서 조용히 빠져, 원인을 고쳐도
+    # 되살릴 방법이 없어진다 - 실제로 판독기가 예외로 죽은 사진 한 장이 이후
+    # 모든 재판독에서 사라졌다. 다시 판독해야 할 사진은 오히려 그쪽이다.
+    read = set(
         session.execute(
             select(Reading.capture_id).where(Reading.run_id == run_id).distinct()
         )
         .scalars()
         .all()
     )
+    noted = {
+        note["capture_id"]
+        for note in (source.notes or [])
+        if isinstance(note, dict) and note.get("capture_id") is not None
+    }
+    capture_ids = sorted(read | noted)
     if not capture_ids:
         raise HTTPException(400, "이 실행에는 다시 판독할 사진이 없다")
 
