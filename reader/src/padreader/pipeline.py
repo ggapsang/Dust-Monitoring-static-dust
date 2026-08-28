@@ -95,6 +95,8 @@ class _Analysis:
     anchor_contrast: float | None
     """``흰 앵커 - 검은 앵커`` 의 채널 평균(raw). 음수면 앵커 자리를 흑백 반대로
     짚고 있다는 뜻이다. 무채색이면 ``None``."""
+    anchor_clipped_ratio: float | None
+    """앵커 화소 중 8bit 한계에 닿은 것의 비율. 막지 않고 잔차로만 낸다."""
     border_fit_error: float | None
     """잉크 띠 두께가 규격에서 벗어난 정도(패드 한 변 대비). 검출한 사각형이
     정말 패드 경계인지의 잔차다."""
@@ -203,9 +205,11 @@ def _analyze(
     chroma_failure: FailureReason | None = None
     chroma_anchor_values: dict[str, Any] | None = None
     anchor_contrast: float | None = None
+    anchor_clipped_ratio: float | None = None
 
     def calibrate() -> None:
-        nonlocal chroma_reflectance, chroma_failure, chroma_anchor_values, anchor_contrast
+        nonlocal chroma_reflectance, chroma_failure, chroma_anchor_values
+        nonlocal anchor_contrast, anchor_clipped_ratio
         norm = channel_normalize(rectified_bgr, size, spec)
         # 실패해도 앵커 실측값은 남긴다. 사유 이름만으로는 좌표가 어긋난
         # 것인지 사진이 나쁜 것인지 밖에서 가릴 수 없다.
@@ -213,6 +217,7 @@ def _analyze(
         chroma_failure = norm.failure
         chroma_anchor_values = norm.anchor_values
         anchor_contrast = norm.anchor_contrast
+        anchor_clipped_ratio = norm.anchor_clipped_ratio
 
     if mode == "chroma":
         # 색으로 직접 찾은 것이니 이미 유채색이라는 게 확정이다 - 다시
@@ -264,6 +269,7 @@ def _analyze(
             chroma_failure=chroma_failure,
             chroma_anchor_values=chroma_anchor_values,
             anchor_contrast=anchor_contrast,
+            anchor_clipped_ratio=anchor_clipped_ratio,
             # 무채색 검출은 이미 이 잔차로 걸러 통과한 것만 여기 온다. 유채색
             # 검출은 아직 걸러 내지 않으므로, 이 값이 곧 "색으로 찾은 사각형이
             # 정말 패드였는지" 를 사후에 볼 수 있는 유일한 근거다.
@@ -501,6 +507,7 @@ def _compare(
         "verification": Verification(
             border_fit_error=reading.border_fit_error,
             anchor_contrast=reading.anchor_contrast,
+            anchor_clipped_ratio=reading.anchor_clipped_ratio,
             point_id_agrees=(
                 None
                 if reading.point_id is None or reading.point_id_raw is None

@@ -166,6 +166,14 @@ class VerificationModel(BaseModel):
             "것을 재고 있다. 무채색 패드는 null"
         ),
     )
+    anchor_clipped_ratio: float | None = Field(
+        default=None,
+        description=(
+            "앵커 화소 중 0 이나 255 에 닿은 것의 비율. 판정에 쓰지 않는다 - "
+            "정규화는 중앙값으로 하므로 몇 개 닿은 것으로는 흔들리지 않는다. "
+            "중앙값이 멀쩡한데 얼마나 아슬아슬했는지를 남기는 값이다"
+        ),
+    )
     point_id_agrees: bool | None = Field(
         default=None,
         description=(
@@ -430,6 +438,7 @@ def to_pad(pad: dict[str, Any], images: ImageLinks | None = None) -> PadResult:
         verification=VerificationModel(
             border_fit_error=_r(verify.get("border_fit_error"), 5),
             anchor_contrast=_r(verify.get("anchor_contrast"), 2),
+            anchor_clipped_ratio=_r(verify.get("anchor_clipped_ratio"), 5),
             point_id_agrees=verify.get("point_id_agrees"),
         ),
         excluded_px=pad.get("excluded_px") or {},

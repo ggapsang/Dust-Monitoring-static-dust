@@ -346,6 +346,13 @@ class ChannelNormalization:
     anchor_values: dict[str, list[float]]
     """{"white": [R,G,B], "black": [R,G,B]} - 두 앵커 패치의 raw 관측값(중앙값)."""
 
+    anchor_clipped_ratio: float
+    """앵커 화소 중 0 이나 255 에 닿은 것의 비율. 흑·백 두 묶음 중 나쁜 쪽.
+
+    **막지 않는다.** 보정은 중앙값으로 하므로 몇 개 닿은 것으로는 흔들리지
+    않는다. 다만 중앙값이 멀쩡해도 절반 가까이 포화됐다면 값을 의심할 근거가
+    되므로, 그 선은 실증 분포를 보고 나중에 넣는다."""
+
     anchor_contrast: float
     """``흰 앵커 - 검은 앵커`` 의 채널 평균(raw 0-255 척도). 정규화의 분모다.
 
@@ -396,26 +403,43 @@ def channel_normalize(
                 "white": [float(v) for v in white_med[::-1]],  # B,G,R -> R,G,B 순으로 보고
                 "black": [float(v) for v in black_med[::-1]],
             },
+            anchor_clipped_ratio=max(_clipped_ratio(white_px), _clipped_ratio(black_px)),
             anchor_contrast=float(span.mean()),
             failure=failure,
         )
 
-    # 클리핑 검사. 8bit 하드 한계 그대로(포화 255, 바닥 0) - 임계값이 아니라
-    # 카메라 양자화 한계 자체다.
+    # 클리핑 검사. **보정에 실제로 쓰는 값이 망가졌는지**를 묻는다.
     #
-    # 두 묶음을 각각 본다. 한 식에 묶어 화소 단위로 OR 하면 두 묶음의 화소 수가
-    # 같아야만 성립하는데, 앵커 사각형이 정규화 좌표라 좌우가 1px 다르게
-    # 반올림되면 그 순간 터진다. 애초에 흰 앵커의 3번 화소와 검은 앵커의 3번
-    # 화소를 짝지을 이유도 없다.
-    def clipped(pixels: np.ndarray) -> bool:
-        return bool(((pixels <= 0) | (pixels >= 255)).any())
-
-    if clipped(white_px) or clipped(black_px):
+    # 예전에는 앵커 화소가 하나라도 0 이나 255 에 닿으면 판독을 막았다. 그런데
+    # 보정은 화소 하나하나가 아니라 중앙값으로 한다. 중앙값은 절반 미만의
+    # 오염에는 흔들리지 않으므로, 몇 개 닿았다고 막는 것은 쓰지도 않는 화소를
+    # 근거로 판독을 버리는 셈이었다 - 실측에서 1만 개 중 1개(0.01%)가 0 에
+    # 닿아 판독 전체가 죽었고, 그때 중앙값은 137 로 바닥에서 한참 멀었다.
+    #
+    # 그래서 중앙값 자체가 8bit 한계에 닿았는지만 본다. 닿았으면 그 채널의
+    # 참값이 얼마인지 알 방법이 없어 정규화가 성립하지 않는다. 임계값을
+    # 새로 들이지 않는다 - 0 과 255 는 고를 수 있는 값이 아니라 카메라 양자화
+    # 한계 그 자체다.
+    #
+    # 얼마나 닿았는지는 막는 대신 ``clipped_ratio`` 로 실어 보낸다. 중앙값이
+    # 멀쩡해도 절반 가까이 포화됐다면 값을 의심할 근거가 되므로, 그 선은
+    # 실증 분포를 보고 나중에 넣는다.
+    if _clipped(white_med) or _clipped(black_med):
         return out(None, FailureReason.ANCHOR_CLIPPED)
     if np.any(span <= 0):
         return out(None, FailureReason.ANCHOR_SPAN_INVALID)
 
     return out((rectified_bgr.astype(np.float64) - black_med) / span, None)
+
+
+def _clipped(values: np.ndarray) -> bool:
+    """채널별 대표값이 8bit 한계에 닿았는지."""
+    return bool(((values <= 0) | (values >= 255)).any())
+
+
+def _clipped_ratio(pixels: np.ndarray) -> float:
+    """0 이나 255 에 닿은 화소의 비율."""
+    return float(((pixels <= 0) | (pixels >= 255)).any(axis=1).mean()) if pixels.size else 0.0
 
 
 def luma_of(reflectance: np.ndarray) -> np.ndarray:

@@ -52,9 +52,16 @@ class FailureReason(str, Enum):
     """이미지를 읽을 수 없거나 형식이 지원되지 않는다."""
 
     ANCHOR_CLIPPED = "anchor_clipped"
-    """유채색 패드의 2톤 앵커 패치에서 어느 채널이 포화(255) 또는 바닥(0) 에
-    붙었다. 채널별 정규화가 성립하지 않으므로 조용히 잘못된 값을 내지 않고
-    판독 전체를 실패로 남긴다."""
+    """유채색 앵커의 **대표값**이 포화(255) 또는 바닥(0) 에 붙었다.
+
+    거기 닿으면 그 채널의 참값이 얼마인지 알 방법이 없어 채널별 정규화가
+    성립하지 않는다. 조용히 잘못된 값을 내지 않고 판독 전체를 실패로 남긴다.
+
+    화소 하나라도 닿으면 막던 것을 대표값 기준으로 바꿨다. 정규화가 쓰는 값은
+    중앙값이라 몇 개 닿은 것으로는 흔들리지 않는데, 그걸로 막으면 쓰지도 않는
+    화소를 근거로 판독을 버리게 된다 - 실측에서 1만 개 중 1개(0.01%)가 0 에
+    닿아 판독이 죽었고 그때 중앙값은 137 이었다. 얼마나 닿았는지는
+    ``verification.anchor_clipped_ratio`` 로 실어 보낸다."""
 
     ANCHOR_SPAN_INVALID = "anchor_span_invalid"
     """유채색 앵커의 백색 패치가 흑색 패치보다 밝지 않은 채널이 있다.
@@ -325,6 +332,14 @@ class Verification:
     0 근처면 두 자리가 같은 것을 재고 있다 - 둘 다 좌표가 실물 도안과 어긋
     났다는 신호다. 무채색 패드는 이 보정을 쓰지 않으므로 ``None``."""
 
+    anchor_clipped_ratio: float | None = None
+    """앵커 화소 중 0 이나 255 에 닿은 것의 비율. 흑·백 두 묶음 중 나쁜 쪽.
+
+    **판정에 쓰지 않는다.** 정규화가 쓰는 값은 중앙값이라 몇 개 닿은 것으로는
+    흔들리지 않으므로, 막는 것은 중앙값이 닿았을 때뿐이다. 이 값은 "중앙값은
+    멀쩡한데 얼마나 아슬아슬했나" 를 남겨 두는 것이며, 선을 넣을지는 실증
+    분포를 보고 정한다. 무채색 패드는 이 보정을 쓰지 않으므로 ``None``."""
+
     point_id_agrees: bool | None = None
     """번호를 자유롭게 읽은 결과가 배정된 개소 번호와 같은가.
 
@@ -337,6 +352,7 @@ class Verification:
         return {
             "border_fit_error": _f(self.border_fit_error),
             "anchor_contrast": _f(self.anchor_contrast),
+            "anchor_clipped_ratio": _f(self.anchor_clipped_ratio),
             "point_id_agrees": self.point_id_agrees,
         }
 
