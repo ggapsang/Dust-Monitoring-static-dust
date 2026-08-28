@@ -370,39 +370,38 @@ def test_v3_geometry_matches_the_printed_artwork() -> None:
 
 
 # ---------------------------------------------------------------------------
-# chroma_v2 — 유채색 도안 개정판
+# chroma_v3 — 유채색 도안 개정판
 #
 # v3 와 같은 방식으로 실물 PNG 를 다시 스캔한다. 규격과 도안이 어긋난 채로
 # 굴러가던 것이 유채색 판독을 통째로 실패시킨 적이 있어, 개정판도 같은 그물을
 # 씌운다.
 # ---------------------------------------------------------------------------
 
-CHROMA_V2_SAMPLE = ASSETS / "pad_chroma_v2" / "pad_1092_magenta_v2.png"
-"""선군 없이 렌더한 개정 도안(``make_pad_chroma_v2.py --no-probe``).
+CHROMA_V3_SAMPLE = ASSETS / "pad_dual_tones" / "pad_1092_magenta_v3.png"
+"""``make_pad_chroma_v3.py`` 가 그린 개정 도안. 선군이 없고 측정면 한 변이 0.6900 이다.
 
-``assets/pad_dual_tones/`` 에 있는 같은 이름의 파일은 선군이 들어간 초판이다.
-규격에서 선군을 뺀 것은 아래 변의 띠 검증 여유를 확보하기 위해서이므로,
-대조 대상도 선군 없는 쪽이어야 한다.
+같은 폴더의 ``*_v2.png`` 는 선군이 남아 있고 한 변이 0.6820 인 중간판이라
+대조 대상이 아니다.
 """
 
 
-def test_chroma_v2_anchor_rects_hit_the_right_shade() -> None:
+def test_chroma_v3_anchor_rects_hit_the_right_shade() -> None:
     """``anchor_white`` 자리가 밝고 ``anchor_black`` 자리가 어두운지."""
-    for rect in spec.CHROMA_V2.anchor_white:
-        assert v3_patch(CHROMA_V2_SAMPLE, rect).mean() > 200, f"흰 앵커가 밝지 않다: {rect}"
-    for rect in spec.CHROMA_V2.anchor_black:
-        assert v3_patch(CHROMA_V2_SAMPLE, rect).mean() < 55, f"검은 앵커가 어둡지 않다: {rect}"
+    for rect in spec.CHROMA_V3.anchor_white:
+        assert v3_patch(CHROMA_V3_SAMPLE, rect).mean() > 200, f"흰 앵커가 밝지 않다: {rect}"
+    for rect in spec.CHROMA_V3.anchor_black:
+        assert v3_patch(CHROMA_V3_SAMPLE, rect).mean() < 55, f"검은 앵커가 어둡지 않다: {rect}"
 
 
-def test_chroma_v2_margin_is_square_and_matches_the_artwork() -> None:
+def test_chroma_v3_margin_is_square_and_matches_the_artwork() -> None:
     """측정면이 규격과 맞고, **정사각형**인지.
 
     정사각형이라야 사진에서 패드가 90도 돌아가 있어도(EXIF 회전을 imread 가
     반영하지 않아 흔하다) 역산이 무너지지 않는다. 앞 도안은 1.40:1 이라
     정사각형이어야 할 역산 외곽이 5.3:1 로 나온 사례가 있었다.
     """
-    img, origin, pad = v3_frame(CHROMA_V2_SAMPLE)
-    rect = spec.CHROMA_V2.margin_raw
+    img, origin, pad = v3_frame(CHROMA_V3_SAMPLE)
+    rect = spec.CHROMA_V3.margin_raw
 
     field = img[origin : origin + pad, origin : origin + pad].astype(np.int16)
     chroma = (field.max(axis=2) - field.min(axis=2)) > 40
@@ -424,47 +423,47 @@ def test_chroma_v2_margin_is_square_and_matches_the_artwork() -> None:
     )
 
 
-def test_chroma_v2_leaves_white_gaps_beside_the_measurement_area() -> None:
+def test_chroma_v3_leaves_white_gaps_beside_the_measurement_area() -> None:
     """측정면 좌우에 흰 여백이 있는지. **네 변 띠 검증이 여기에 달려 있다.**
 
     앞 도안은 패드 중간 높이에서 테두리 다음이 곧장 측정면이었다. 어둡게 찍혀
     유채색 명도가 잉크까지 내려가면 둘이 한 덩어리가 되어 띠가 끝나는 자리를
     못 찾고, 좌우 두 변의 검증이 아예 성립하지 않았다.
     """
-    img, origin, pad = v3_frame(CHROMA_V2_SAMPLE)
-    gap = spec.CHROMA_V2.margin_raw.x0 - spec.CHROMA_V2.border_thickness
-    assert gap > spec.CHROMA_V2.border_thickness, (
+    img, origin, pad = v3_frame(CHROMA_V3_SAMPLE)
+    gap = spec.CHROMA_V3.margin_raw.x0 - spec.CHROMA_V3.border_thickness
+    assert gap > spec.CHROMA_V3.border_thickness, (
         f"좌우 흰 여백 {gap:.4f} 이 테두리 두께보다 좁다"
     )
 
     row = img[int(origin + 0.5 * pad), origin : origin + pad]
     band = row[
-        int((spec.CHROMA_V2.border_thickness + 0.01) * pad) : int(
-            (spec.CHROMA_V2.margin_raw.x0 - 0.01) * pad
+        int((spec.CHROMA_V3.border_thickness + 0.01) * pad) : int(
+            (spec.CHROMA_V3.margin_raw.x0 - 0.01) * pad
         )
     ]
     assert band.mean() > 200, "측정면 왼쪽이 흰 바탕이 아니다"
 
 
-def test_chroma_v2_has_no_line_group() -> None:
+def test_chroma_v3_has_no_line_group() -> None:
     """선군을 뺐는지. 아래 변 검증의 여유를 확보하려고 없앤 것이다.
 
     측정면을 키우느라 아래로 밀린 선군이 테두리와 0.0090 까지 붙어 있었다.
     실물 사진에서 그 틈이 흐림으로 메워지면 테두리와 선군이 한 덩어리가 되어
     아래 변의 띠 두께가 규격의 1.7배로 잡힌다.
     """
-    assert spec.CHROMA_V2.line_bars == ()
-    assert spec.CHROMA_V2.line_rects == ()
-    assert spec.CHROMA_V2.line_gap_rects() == ()
+    assert spec.CHROMA_V3.line_bars == ()
+    assert spec.CHROMA_V3.line_rects == ()
+    assert spec.CHROMA_V3.line_gap_rects() == ()
 
-    img, origin, pad = v3_frame(CHROMA_V2_SAMPLE)
+    img, origin, pad = v3_frame(CHROMA_V3_SAMPLE)
     column = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[:, origin + pad // 2]
     inside = column[origin : origin + pad]
 
     # 측정면 아래끝부터 테두리 안쪽까지가 전부 흰 바탕이어야 한다.
     below = inside[
-        int((spec.CHROMA_V2.margin_raw.y1 + 0.01) * pad) : int(
-            (1.0 - spec.CHROMA_V2.border_thickness - 0.005) * pad
+        int((spec.CHROMA_V3.margin_raw.y1 + 0.01) * pad) : int(
+            (1.0 - spec.CHROMA_V3.border_thickness - 0.005) * pad
         )
     ]
     assert below.min() > 200, f"측정면 아래에 인쇄물이 남아 있다 (최저 {below.min()})"
