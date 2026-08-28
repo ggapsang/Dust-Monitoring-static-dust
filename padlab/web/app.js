@@ -88,10 +88,16 @@ window.addEventListener('hashchange', route);
 // 누를 때마다 기다려야 하고, 실증 규모에서는 그럴 이유가 없다. 기간만
 // 서버에 넘겨 가져올 범위를 정한다.
 
+// 시험 지표(od_score, pad_type, chroma/luma) 열은 뺐다. 아직 판정에 쓰지 않는
+// 값이라 표만 넓히고, 값이 튀면 오히려 읽는 사람을 헷갈리게 한다. DB 와 API
+// 응답에는 그대로 남아 있으므로 필요하면 그쪽에서 본다.
 const COLUMNS = [
   { key: 'captured_at', label: '촬영 일시', kind: 'date',
     face: (r) => (r.captured_at || '').slice(0, 10),
     cell: (r) => stamp(r.captured_at) },
+  { key: 'requested_at', label: '판독 요청', kind: 'date',
+    face: (r) => (r.requested_at || '').slice(0, 10),
+    cell: (r) => stamp(r.requested_at) },
   { key: 'target_id', label: 'TARGET_ID', kind: 'text' },
   { key: 'point_id', label: '개소', kind: 'text', cls: 'key' },
   { key: 'sequence', label: '회차', kind: 'num', digits: 0 },
@@ -103,11 +109,6 @@ const COLUMNS = [
   { key: 'score_uniform', label: 'uniform', kind: 'num', digits: 3 },
   { key: 'score_localized', label: 'localized', kind: 'num', digits: 3 },
   { key: 'score_combined', label: 'total', kind: 'num', digits: 3, cls: 'key' },
-  { key: 'od_score', label: 'od_score (시험)', kind: 'num', digits: 3 },
-  { key: 'pad_type', label: '패드종류 (시험)', kind: 'text' },
-  { key: 'chroma_score', label: 'chroma.score (시험)', kind: 'num', digits: 3 },
-  { key: 'luma_dark_score', label: 'luma_dark.score (시험)', kind: 'num', digits: 3 },
-  { key: 'luma_light_score', label: 'luma_light.score (시험)', kind: 'num', digits: 3 },
   { key: 'quality_sharpness', label: '선명도', kind: 'num', digits: 4 },
   { key: 'quality_saturated_ratio', label: '포화', kind: 'num', digits: 4 },
   { key: 'quality_pad_size_px', label: '패드 크기', kind: 'num', digits: 1 },
@@ -116,9 +117,6 @@ const COLUMNS = [
     cell: (r) => `${escape(r.read_point_id || '—')}${r.read_point_id && r.point_id && r.read_point_id !== r.point_id
       ? ' <span class="badge warn" title="판독 번호가 짝지어진 개소와 다르다"><i class="dot"></i>불일치</span>' : ''}` },
   { key: 'elapsed_ms', label: '처리(ms)', kind: 'num', digits: 0 },
-  { key: 'requested_at', label: '판독 요청', kind: 'date',
-    face: (r) => (r.requested_at || '').slice(0, 10),
-    cell: (r) => stamp(r.requested_at) },
   { key: 'run_kind', label: '실행', kind: 'text',
     get: (r) => (r.run_kind === 'rerun' ? '재판독' : '최초'),
     cell: (r) => `${r.run_kind === 'rerun'

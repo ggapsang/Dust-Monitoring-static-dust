@@ -110,9 +110,19 @@ def _local_background(reflectance: np.ndarray, window: int, tone: str) -> np.nda
     return cv2.morphologyEx(reflectance, operation, kernel, borderType=cv2.BORDER_REPLICATE)
 
 
-def _depth(region: np.ndarray, background: np.ndarray, tone: str) -> np.ndarray:
-    """배경에서 잉크(=1) 까지의 폭 대비 얼마나 갔는지."""
-    span = background - 1.0 if tone == "white" else 1.0 - background
+def _depth(
+    region: np.ndarray, background: np.ndarray, tone: str, ink: float = 1.0
+) -> np.ndarray:
+    """배경에서 **완전 오염 끝점** 까지의 폭 대비 얼마나 갔는지.
+
+    ``ink`` 가 그 끝점이다. 무채색 패드는 테두리 잉크이고 정규화가 그것을 1.0
+    으로 놓으므로 기본값이 1.0 이다. 유채색 패드는 채도를 재는데, 무채색 분진이
+    완전히 덮으면 채도가 0 이 되므로 끝점이 0 이다.
+
+    끝점만 다를 뿐 뜻은 같다 - "깨끗한 상태에서 완전히 덮인 상태까지의 거리 중
+    몇 %를 갔는가". 그래서 두 패드 종류가 같은 저울을 쓴다.
+    """
+    span = background - ink if tone == "white" else ink - background
     span = np.maximum(span, MIN_TONE_SPAN)
     shift = (background - region) if tone == "white" else (region - background)
     return np.clip(shift / span, 0.0, 1.0).astype(np.float32)
@@ -126,8 +136,15 @@ def extract_dust(
     cfg: DustConfig,
     quality_cfg: QualityConfig,
     pad_size_px: int,
+    ink_level: float = 1.0,
 ) -> DustMap:
-    """여백에서 분진 깊이 두 가지를 낸다."""
+    """여백에서 분진 깊이 두 가지를 낸다.
+
+    ``reflectance`` 는 무채색 패드에서는 테두리로 나눈 상대 밝기이고, 유채색
+    패드에서는 앵커로 정규화한 **채도** 다. 어느 쪽이든 "깨끗할수록 크고,
+    분진이 덮일수록 ``ink_level`` 로 수렴하는 값" 이라는 성질이 같아서 같은
+    코드가 돈다. 다른 것은 그 끝점뿐이다(무채색 1.0, 유채색 0.0).
+    """
     margin_box = spec.margin.to_pixels(pad_size_px)
     mx0, my0, mx1, my1 = margin_box
 
@@ -153,16 +170,16 @@ def extract_dust(
             np.percentile(values, percentile if tone == "white" else 100.0 - percentile)
         )
     else:
-        clean_level = 1.0 + MIN_TONE_SPAN
+        clean_level = ink_level + MIN_TONE_SPAN
 
     clean_plane = np.full(region.shape, clean_level, np.float32)
-    uniform_depth = _depth(region, clean_plane, tone)
+    uniform_depth = _depth(region, clean_plane, tone, ink_level)
     uniform_depth = np.where(measurable, uniform_depth, 0.0).astype(np.float32)
 
     # --- localized: localized 배경 대비 ---
     window = _odd(max(3, int(round(cfg.local_window * pad_size_px))))
     background = _local_background(region, window, tone)
-    local_depth = _depth(region, background, tone)
+    local_depth = _depth(region, background, tone, ink_level)
     local_depth = np.where(measurable, local_depth, 0.0).astype(np.float32)
 
     return DustMap(

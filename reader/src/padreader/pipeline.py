@@ -97,6 +97,11 @@ class _Analysis:
     짚고 있다는 뜻이다. 무채색이면 ``None``."""
     anchor_clipped_ratio: float | None
     """앵커 화소 중 8bit 한계에 닿은 것의 비율. 막지 않고 잔차로만 낸다."""
+    chroma_dust: DustMap | None
+    """채도 위에서 낸 분진 깊이. 유채색 패드의 uniform/localized 는 이것으로 낸다.
+
+    무채색 경로와 같은 ``extract_dust`` 를 끝점만 0 으로 바꿔 돌린 결과다 -
+    두 축의 뜻("고르게 퍼졌나 / 한 군데 뭉쳤나")이 그대로 유지된다."""
     border_fit_error: float | None
     """잉크 띠 두께가 규격에서 벗어난 정도(패드 한 변 대비). 검출한 사각형이
     정말 패드 경계인지의 잔차다."""
@@ -145,9 +150,34 @@ def _analyze_all(
     고쳐야 하는지도 알 수 없다.
     """
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    # 유채색 패드는 규격이 따로다. 현장에 붙은 유채색 도안의 좌표가 무채색
-    # 규격(cfg.spec)과 달라서, 그쪽 좌표로 재면 앵커도 측정면도 어긋난다.
-    spec = get_spec(cfg.chroma.spec) if mode == "chroma" else spec
+    if mode != "chroma":
+        return _analyze_with(bgr, gray, tone, cfg, spec, mode)
+
+    # 유채색은 규격이 따로이고 도안 세대가 섞여 있을 수 있다. 후보를 차례로
+    # 재 보고 앵커 대비가 실제로 성립하는 쪽을 쓴다 - 규격이 틀리면 앵커 창이
+    # 패치를 벗어나 대비가 0 이나 음수가 되므로 그 자체로 갈린다.
+    best: tuple[float, list[_Analysis], list[tuple[FailureReason, str]]] | None = None
+    for name in [cfg.chroma.spec, *cfg.chroma.fallback_specs]:
+        found, rejected = _analyze_with(bgr, gray, tone, cfg, get_spec(name), mode)
+        contrasts = [f.anchor_contrast for f in found if f.anchor_contrast is not None]
+        score = max(contrasts) if contrasts else float("-inf")
+        if best is None or score > best[0]:
+            best = (score, found, rejected)
+        if score > 0:
+            # 대비가 양수면 그 규격으로 정규화가 성립한다. 더 볼 것이 없다.
+            break
+    return best[1], best[2]
+
+
+def _analyze_with(
+    bgr: np.ndarray,
+    gray: np.ndarray,
+    tone: str,
+    cfg: Config,
+    spec: PadSpec,
+    mode: str,
+) -> tuple[list[_Analysis], list[tuple[FailureReason, str]]]:
+    """규격 하나로 사진 한 장을 처리한다."""
     # mode="chroma" 는 무채색 검출(잉크 링 찾기)을 아예 안 쓴다 - 유채색
     # 측정면이 어둡게 찍히면 잉크와 밝기로 안 갈려 링 자체가 안 잡히기
     # 때문이다(실측: 명도 13인데 채도는 0.91). 색으로 직접 찾는
@@ -206,10 +236,11 @@ def _analyze(
     chroma_anchor_values: dict[str, Any] | None = None
     anchor_contrast: float | None = None
     anchor_clipped_ratio: float | None = None
+    chroma_dust: DustMap | None = None
 
     def calibrate(anchor_spec: PadSpec) -> None:
         nonlocal chroma_reflectance, chroma_failure, chroma_anchor_values
-        nonlocal anchor_contrast, anchor_clipped_ratio
+        nonlocal anchor_contrast, anchor_clipped_ratio, chroma_dust
         norm = channel_normalize(rectified_bgr, size, anchor_spec)
         # 실패해도 앵커 실측값은 남긴다. 사유 이름만으로는 좌표가 어긋난
         # 것인지 사진이 나쁜 것인지 밖에서 가릴 수 없다.
@@ -218,6 +249,21 @@ def _analyze(
         chroma_anchor_values = norm.anchor_values
         anchor_contrast = norm.anchor_contrast
         anchor_clipped_ratio = norm.anchor_clipped_ratio
+        if norm.reflectance is None:
+            return
+        # 채도 맵 위에서 무채색과 **같은 코드**를 돌린다. 분진이 덮일수록
+        # 채도가 0 으로 수렴하므로 끝점만 0 으로 준다. 오염이 값을 낮춘다는
+        # 점에서 백색 패드와 극성이 같아 tone 은 "white" 를 그대로 쓴다.
+        chroma_dust = extract_dust(
+            reflectance=saturation_of(norm.reflectance),
+            rectified_gray=rectified_gray,
+            spec=anchor_spec,
+            tone="white",
+            cfg=cfg.dust,
+            quality_cfg=cfg.quality,
+            pad_size_px=size,
+            ink_level=0.0,
+        )
 
     if mode == "chroma":
         # 색으로 직접 찾은 것이니 이미 유채색이라는 게 확정이다 - 다시
@@ -273,6 +319,7 @@ def _analyze(
             chroma_anchor_values=chroma_anchor_values,
             anchor_contrast=anchor_contrast,
             anchor_clipped_ratio=anchor_clipped_ratio,
+            chroma_dust=chroma_dust,
             # 무채색 검출은 이미 이 잔차로 걸러 통과한 것만 여기 온다. 유채색
             # 검출은 아직 걸러 내지 않으므로, 이 값이 곧 "색으로 찾은 사각형이
             # 정말 패드였는지" 를 사후에 볼 수 있는 유일한 근거다.
@@ -600,8 +647,19 @@ def _compare(
             **partial,
         )
 
+    # 유채색 패드는 **같은 두 축을 채도 위에서** 낸다. 무채색 지표를 그대로
+    # 쓰면 안 된다 - 그 척도는 "여백이 테두리 잉크 색으로 수렴한다" 를 전제하는데
+    # 마젠타는 잉크와 흰 바탕 사이에 있어 그 전제가 노출에 따라 뒤집힌다.
+    # 실측에서 기준 사진은 배경이 잉크보다 밝고(+0.600) 판독 사진은 어두워
+    # (-0.373) 분모가 바닥값에 눌렸고, 그 결과 분진과 무관하게 값이 0.581 까지
+    # 튀었다. 축의 뜻("고르게 퍼졌나 / 한 군데 뭉쳤나")은 그대로 가져간다.
+    dust_pair = (
+        (reading.chroma_dust, base.chroma_dust)
+        if reading.chroma_dust is not None and base.chroma_dust is not None
+        else (reading.dust, base.dust)
+    )
     scores, blobs, uniform_diff = compute_scores(
-        reading.dust, base.dust, cfg.dust, cfg.score
+        dust_pair[0], dust_pair[1], cfg.dust, cfg.score
     )
 
     measurable = reading.dust.measurable & base.dust.measurable
